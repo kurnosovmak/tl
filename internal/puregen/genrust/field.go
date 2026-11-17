@@ -79,27 +79,3 @@ func (f *Field) IsBit() bool {
 func (f *Field) TL2MaskForOP(op string) string {
 	return fmt.Sprintf("tl2mask%d %s %d", *f.MaskTL2Bit()/8, op, 1<<(*f.MaskTL2Bit()%8))
 }
-
-func (f *Field) EnsureRecursive(bytesVersion bool, directImports *DirectImports) string {
-	if !f.recursive {
-		return ""
-	}
-	fieldAccess, _ := f.FieldAccess("self", bytesVersion, directImports)
-	myType := f.t.TypeString2(bytesVersion, directImports, false, false)
-	return fmt.Sprintf(`	if %s == nil { %s = new(%s) }
-`, fieldAccess, fieldAccess, myType)
-}
-
-//func (f *Field) TypeResettingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports) {
-//	fieldAccess, fieldAsterisk := f.FieldAccess(bytesVersion, directImports)
-//	f.t.TypeResettingCode(cc, bytesVersion, directImports, fieldAccess, fieldAsterisk)
-//if f.recursive {
-//	return fmt.Sprintf(`	if %s != nil {
-//	%s
-//}`, fieldAccess, resetCode)
-//}
-//}
-
-func (f *Field) FieldAccess(val string, bytesVersion bool, directImports *DirectImports) (string, bool) {
-	return fmt.Sprintf("%s.%s", val, f.goName), f.recursive
-}

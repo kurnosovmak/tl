@@ -77,12 +77,12 @@ func (trw *TypeRWBool) typeRepairMasksCode(bytesVersion bool, directImports *Dir
 	return ""
 }
 
-func (trw *TypeRWBool) typeWritingCode(bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool, last bool, needError bool) string {
-	return wrapLastW(last, fmt.Sprintf("%sWriteTL1%s(w, %s%s)", trw.wr.goGlobalName, addBare(bare), addAsterisk(ref, val), joinWithCommas(natArgs)), needError)
+func (trw *TypeRWBool) typeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
+	return fmt.Sprintf("crate::types::%s::write_tl1(%s, buf)?;", trw.wr.goGlobalName, addAsterisk(ref, val))
 }
 
 func (trw *TypeRWBool) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
-	cc.AddLinef("%s = crate::types::%s::read_tl1(buf%s%s)?;", addAsterisk(ref, val), trw.wr.goGlobalName, joinWithCommas(natArgs), trw.wr.fetcherCall())
+	cc.AddLinef("%s = crate::types::%s::read_tl1(buf)?;", addAsterisk(ref, val), trw.wr.goGlobalName)
 }
 
 func (trw *TypeRWBool) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
@@ -102,17 +102,24 @@ func (trw *TypeRWBool) GenerateCode(bytesVersion bool, directImports *DirectImpo
 		return ""
 	}
 	cc := codecreator.NewRustCodeCreator()
-
-	cc.AddLinef("use basictl::TLRead as _;")
-	cc.AddEmptyLine()
-	cc.AddLinef("pub(crate) fn read_tl1<B: bytes::Buf + Copy>(buf: &mut B) -> basictl::Result<bool> {")
-	cc.AddBlock(func() {
+	addTL1Import(cc)
+	cc.AddLinef("pub(crate) fn read_tl1(buf: &mut &[u8]) -> basictl::Result<bool> {")
+	cc.FinishBlock(func() {
 		if trw.wr.OriginTL2() {
-			cc.AddLinef(`Err(basictl::Error::NoTL1("%s")`, trw.wr.pureType.CanonicalName())
+			noTL1(cc, trw.wr)
 			return
 		}
 		cc.AddLinef("buf.read_bool(0x%08x, 0x%08x)", trw.falseTag, trw.trueTag)
-	})
-	cc.AddLinef("}")
+	}, "}")
+	cc.AddEmptyLine()
+	cc.AddLinef("pub(crate) fn write_tl1(value: bool, buf: &mut Vec<u8>) -> basictl::Result<()> {")
+	cc.FinishBlock(func() {
+		if trw.wr.OriginTL2() {
+			noTL1(cc, trw.wr)
+			return
+		}
+		cc.AddLinef("basictl::write_tag(buf, if value { 0x%08x } else { 0x%08x });", trw.trueTag, trw.falseTag)
+		cc.AddLinef("Ok(())")
+	}, "}")
 	return cc.Text()
 }

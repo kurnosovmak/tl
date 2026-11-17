@@ -170,6 +170,7 @@ func (gen *genRust) generateTypeStruct(myWrapper *TypeRWWrapper, pureType *pure.
 		unionIndex:     unionIndex,
 	}
 	res.fieldsDec.FillGolangIdentifies()
+	res.fieldsDec.DeconflictName("Self")
 	myWrapper.trw = res
 	//nextTL2MaskBit := 0
 	for _, field := range pureType.Fields() {
@@ -254,6 +255,7 @@ func (gen *genRust) generateTypeUnion(myWrapper *TypeRWWrapper, pureType *pure.T
 		IsEnum:   pureType.IsEnum(),
 	}
 	myWrapper.trw = res
+	res.fieldsDec.DeconflictName("Self")
 	for i, typ := range pureType.VariantTypes() {
 		variantName := pureType.VariantNames()[i]
 
@@ -334,8 +336,4 @@ func (gen *genRust) GenerateTypeDict(myWrapper *TypeRWWrapper, pureType *pure.Ty
 	myWrapper.trw = res
 	myWrapper.fileNameOverride = fieldType
 	return nil
-}
-
-func (gen *genRust) generateNamespacesCode(anyTypeAlias bool, anyFunctions bool, name string, namespace *Namespace, sortedImports []string, directImports *DirectImports) string {
-	return ""
 }

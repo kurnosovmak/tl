@@ -79,12 +79,12 @@ func (trw *TypeRWMaybe) typeRepairMasksCode(bytesVersion bool, directImports *Di
 	return fmt.Sprintf("%s.RepairMasks(%s)", val, strings.Join(natArgs, ","))
 }
 
-func (trw *TypeRWMaybe) typeWritingCode(bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool, last bool, needError bool) string {
-	return wrapLastW(last, fmt.Sprintf("%s.WriteTL1%s(w %s %s)", val, addBare(bare), joinWithCommas(natArgs), trw.wr.fetcherCall()), needError)
+func (trw *TypeRWMaybe) typeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
+	return fmt.Sprintf("crate::types::%s::write_tl1_boxed(%s, buf%s)?;", trw.wr.goGlobalName, addAmpersand(ref, val), joinWithCommas(natArgs))
 }
 
 func (trw *TypeRWMaybe) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
-	cc.AddLinef("crate::types::%s::read_tl1_boxed(&mut %s, buf%s%s)?;", trw.wr.goGlobalName, addAsterisk(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
+	cc.AddLinef("crate::types::%s::read_tl1_boxed(%s, buf%s)?;", trw.wr.goGlobalName, addMutableRef(ref, val), joinWithCommas(natArgs))
 }
 
 func (trw *TypeRWMaybe) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
@@ -108,35 +108,26 @@ func (trw *TypeRWMaybe) typeJSON2ReadingCode(bytesVersion bool, directImports *D
 
 func (trw *TypeRWMaybe) GenerateCode(bytesVersion bool, directImports *DirectImports) string {
 	cc := codecreator.NewRustCodeCreator()
-
-	//goName := addBytes(trw.wr.goGlobalName, bytesVersion)
-	natDecl := trw.wr.formatNatArgsDecl()
-	//natCall := trw.wr.formatNatArgsDeclCall()
+	addTL1Import(cc)
+	natArgs := trw.wr.formatNatArgs(nil, trw.element.NatArgs())
 	typeString := trw.wr.TypeString2(bytesVersion, directImports, false, false)
-	//elementTypeString := trw.element.t.TypeString2(bytesVersion, directImports, false, false)
-
-	cc.AddLinef("use basictl::TLRead as _;")
-	cc.AddEmptyLine()
-
-	cc.AddLinef("pub(crate) fn read_tl1_boxed<B: bytes::Buf + Copy>(value: &mut %s, buf: &mut B%s) -> basictl::Result<()> {", typeString, natDecl)
-	cc.FinishBlock(func() {
-		if trw.wr.OriginTL2() {
-			cc.AddLinef(`Err(basictl::Error::NoTL1("%s")`, trw.wr.pureType.CanonicalName())
-			return
-		}
-		cc.AddLinef("let ok = buf.read_bool(0x%08x, 0x%08x)?;", trw.emptyTag, trw.okTag)
-		cc.IfElse("ok", func() {
-			cc.If("value.is_none()", func() {
-				cc.AddLinef("*value = Some(Default::default())")
-			})
-			cc.If("let Some(subValue) = value", func() {
-				natArgs := trw.wr.formatNatArgs(nil, trw.element.NatArgs())
-				trw.element.t.TypeReadingCode(cc, bytesVersion, directImports, "subValue", trw.element.Bare(), natArgs, true)
-			})
+	trw.wr.generateTL1Functions(cc, "_boxed", typeString, func() {
+		cc.IfElse(fmt.Sprintf("buf.read_bool(0x%08x, 0x%08x)?", trw.emptyTag, trw.okTag), func() {
+			cc.AddLinef("let mut element = %s;", rustDefault(trw.element.t))
+			trw.element.t.TypeReadingCode(cc, bytesVersion, directImports, "element", trw.element.Bare(), natArgs, false)
+			cc.AddLinef("*value = Some(element);")
 		}, func() {
-			cc.AddLinef("*value = None")
+			cc.AddLinef("*value = None;")
 		})
 		cc.AddLinef("Ok(())")
-	}, "}")
+	}, func() {
+		cc.IfElse("let Some(element) = value", func() {
+			cc.AddLinef("basictl::write_tag(buf, 0x%08x);", trw.okTag)
+			cc.AddLines(strings.Split(trw.element.t.TypeWritingCode("element", trw.element.Bare(), natArgs, true), "\n")...)
+		}, func() {
+			cc.AddLinef("basictl::write_tag(buf, 0x%08x);", trw.emptyTag)
+		})
+		cc.AddLinef("Ok(())")
+	})
 	return cc.Text()
 }

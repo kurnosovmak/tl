@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/VKCOM/tl/internal/pure"
 	"github.com/VKCOM/tl/internal/tlcodegen/codecreator"
 	"github.com/VKCOM/tl/internal/utils"
 )
@@ -35,7 +34,7 @@ type TypeRW interface {
 	typeResettingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, ref bool)
 	typeRandomCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool) string
 	typeRepairMasksCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool) string
-	typeWritingCode(bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool, last bool, needError bool) string
+	typeWritingCode(val string, bare bool, natArgs []string, ref bool) string
 	typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool)
 	typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string
 	typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string
@@ -58,10 +57,6 @@ func addBytes(val string, bytesVersion bool) string {
 	return ifString(bytesVersion, val+"Bytes", val)
 }
 
-func addBare(bare bool) string {
-	return ifString(bare, "", "_boxed")
-}
-
 func addAmpersand(ref bool, val string) string {
 	return ifString(ref, val, "&"+val)
 }
@@ -82,14 +77,6 @@ func wrapLast(last bool, code string) string {
 	return ifString(last, "return "+code+"", "if err := "+code+"; err != nil { return err }")
 }
 
-func wrapLastW(last bool, code string, needError bool) string {
-	if needError {
-		return ifString(last, "return "+code+"", "if w, err = "+code+"; err != nil { return w, err }")
-	} else {
-		return ifString(last, "return "+code+"", "w = "+code)
-	}
-}
-
 func ifString(value bool, t string, f string) string {
 	if value {
 		return t
@@ -105,25 +92,6 @@ func ifString(value bool, t string, f string) string {
 func someHash(str string) uint32 {
 	h := sha256.Sum256([]byte(str))
 	return binary.LittleEndian.Uint32(h[:])
-}
-
-func printComments(before string, right string) string {
-	result := ""
-	if before != "" {
-		result += before + "\n"
-	}
-	if right != "" {
-		result += right + "\n"
-	}
-	return result
-}
-
-func printCommentsType(pureType pure.TypeInstance) string {
-	return printComments(pureType.Common().CommentBefore(), pureType.Common().CommentRight())
-}
-
-func printCommentsField(field Field) string {
-	return printComments(field.pureField.CommentBefore(), field.pureField.CommentRight())
 }
 
 func ToUpperFirst(str string) string {

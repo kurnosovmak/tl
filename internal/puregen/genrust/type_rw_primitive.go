@@ -8,7 +8,6 @@ package genrust
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/VKCOM/tl/internal/tlcodegen/codecreator"
 )
@@ -25,7 +24,6 @@ type TypeRWPrimitive struct {
 	readValue      string
 	writeJSONValue string
 	readJSON2Value string
-	writeHasError  bool // we keep this for future types
 }
 
 var _ TypeRW = &TypeRWPrimitive{}
@@ -94,20 +92,15 @@ func (trw *TypeRWPrimitive) typeRepairMasksCode(bytesVersion bool, directImports
 	return ""
 }
 
-func (trw *TypeRWPrimitive) typeWritingCode(bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool, last bool, needError bool) string {
-	prefix := ""
-	if !bare && trw.canonicalType != "__function_result" {
-		log.Panicf("trw %q cannot be boxed", trw.canonicalType)
-		//prefix = fmt.Sprintf("w = basictl.NatWrite(w, 0x%x)\n", trw.tlTag)
+func (trw *TypeRWPrimitive) typeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
+	switch trw.canonicalType {
+	case "string":
+		return fmt.Sprintf("basictl::write_string(buf, %s)?;", addAmpersand(ref, val))
+	case "__function", "__function_result":
+		return "return Err(basictl::Error::UnsupportedFunction);"
+	default:
+		return fmt.Sprintf("buf.extend_from_slice(&(%s).to_le_bytes());", val)
 	}
-	code := fmt.Sprintf("%s(w, %s)", addBytes(trw.writeValue, bytesVersion), addAsterisk(ref, val))
-	if trw.writeHasError {
-		return prefix + wrapLastW(last, code, needError)
-	}
-	if needError {
-		return prefix + ifString(last, "return "+code+", nil", "w = "+code)
-	}
-	return prefix + ifString(last, "return "+code, "w = "+code)
 }
 
 func (trw *TypeRWPrimitive) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
@@ -121,12 +114,10 @@ func (trw *TypeRWPrimitive) typeJSONEmptyCondition(bytesVersion bool, val string
 }
 
 func (trw *TypeRWPrimitive) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
-	if !bare && trw.canonicalType != "__function_result" {
-		log.Panicf("trw %q cannot be boxed", trw.canonicalType)
+	if trw.canonicalType == "__function" || trw.canonicalType == "__function_result" {
+		cc.AddLinef("return Err(basictl::Error::UnsupportedFunction);")
+		return
 	}
-	//if bytesVersion {
-	//	return wrapLastW(last, fmt.Sprintf("basictl.StringReadBytes(w, %s )", addAmpersand(ref, val)), true)
-	//}
 	cc.AddLinef(trw.readValue, addAsterisk(ref, val))
 }
 

@@ -260,9 +260,8 @@ func (w *TypeRWWrapper) TypeRepairMasksCode(bytesVersion bool, directImports *Di
 	bytesVersion = bytesVersion && w.hasBytesVersion
 	return w.trw.typeRepairMasksCode(bytesVersion, directImports, val, natArgs, ref)
 }
-func (w *TypeRWWrapper) TypeWritingCode(bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool, last bool, needError bool) string {
-	bytesVersion = bytesVersion && w.hasBytesVersion
-	return w.trw.typeWritingCode(bytesVersion, directImports, val, bare, natArgs, ref, last, needError)
+func (w *TypeRWWrapper) TypeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
+	return w.trw.typeWritingCode(val, bare, natArgs, ref)
 }
 func (w *TypeRWWrapper) TypeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
 	bytesVersion = bytesVersion && w.hasBytesVersion
@@ -352,13 +351,6 @@ func (w *TypeRWWrapper) HasFetcher() bool {
 func (w *TypeRWWrapper) fetcherDecl() string {
 	if w.HasFetcher() {
 		return ", fetcher any"
-	}
-	return ""
-}
-
-func (w *TypeRWWrapper) fetcherCall() string {
-	if w.HasFetcher() {
-		return ", fetcher"
 	}
 	return ""
 }
