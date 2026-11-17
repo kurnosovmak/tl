@@ -119,27 +119,11 @@ func (trw *TypeRWUnion) typeRepairMasksCode(bytesVersion bool, directImports *Di
 }
 
 func (trw *TypeRWUnion) typeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
-	return fmt.Sprintf("crate::types::%s::write_tl1_boxed(%s, buf%s)?;", trw.wr.goGlobalName, addAmpersand(ref, val), joinWithCommas(natArgs))
+	return fmt.Sprintf("crate::types::%s::write_tl1_boxed(%s, buf%s%s)?;", trw.wr.goGlobalName, addAmpersand(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
 }
 
 func (trw *TypeRWUnion) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
-	cc.AddLinef("crate::types::%s::read_tl1_boxed(%s, buf%s)?;", trw.wr.goGlobalName, addMutableRef(ref, val), joinWithCommas(natArgs))
-}
-
-func (trw *TypeRWUnion) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
-	return ""
-}
-
-func (trw *TypeRWUnion) typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string {
-	if needError {
-		return fmt.Sprintf("if w, err = %s.WriteJSONOpt(jctx, w %s); err != nil { return w, err }", val, joinWithCommas(natArgs))
-	} else {
-		return fmt.Sprintf("w = %s.WriteJSONOpt(jctx, w %s)", val, joinWithCommas(natArgs))
-	}
-}
-
-func (trw *TypeRWUnion) typeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string {
-	return fmt.Sprintf("if err := %s.ReadJSONGeneral(jctx, %s %s); err != nil { return err }", val, jvalue, joinWithCommas(natArgs))
+	cc.AddLinef("crate::types::%s::read_tl1_boxed(%s, buf%s%s)?;", trw.wr.goGlobalName, addMutableRef(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
 }
 
 // TODO - remove with long adapters

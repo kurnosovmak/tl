@@ -1,75 +1,42 @@
-// Copyright 2025 V Kontakte LLC
-//
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package genrust
 
-import "fmt"
+import "github.com/VKCOM/tl/internal/tlcodegen/codecreator"
 
-func (trw *TypeRWUnion) calculateLayoutCall(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetSizes string,
-	targetObject string,
-	zeroIfEmpty bool,
-	refObject bool,
-) string {
-	sz := fmt.Sprintf("%[1]s, sz = %[2]s.CalculateLayout(%[1]s, %[3]v)", targetSizes, targetObject, zeroIfEmpty)
-	if zeroIfEmpty {
-		sz = fmt.Sprintf("if %s; sz != 0 {", sz)
-	}
-	return sz + "\ncurrentSize += sz"
-}
-
-func (trw *TypeRWUnion) writeTL2Call(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetSizes string,
-	targetBytes string,
-	targetObject string,
-	zeroIfEmpty bool,
-
-	refObject bool,
-) string {
-	sz := fmt.Sprintf("%[3]s, %[1]s, %[5]s = %[2]s.InternalWriteTL2(%[3]s, %[1]s, %[4]v)",
-		targetSizes,
-		targetObject,
-		targetBytes,
-		zeroIfEmpty,
-		ifString(zeroIfEmpty, "sz", "_"),
-	)
-	if zeroIfEmpty {
-		sz = fmt.Sprintf("if %s; sz != 0 {", sz)
-	}
-	return sz
-}
-
-func (trw *TypeRWUnion) readTL2Call(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetBytes string,
-	targetObject string,
-	canDependOnLocalBit bool,
-
-	refObject bool,
-) string {
-	return fmt.Sprintf("if %[2]s, err = %[1]s.InternalReadTL2(%[2]s); err != nil { return %[2]s, err }",
-		targetObject,
-		targetBytes,
-	)
-}
-
-func (trw *TypeRWUnion) skipTL2Call(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetBytes string,
-	canDependOnLocalBit bool,
-
-	refObject bool,
-) string {
-	return fmt.Sprintf(`if %[2]s, err = basictl.SkipSizedValue(%[2]s); err != nil { return %[2]s, err }`,
-		"",
-		targetBytes)
+func (trw *TypeRWUnion) generateTL2(cc *codecreator.RustCodeCreator) {
+	name := trw.wr.goGlobalName
+	trw.wr.generateTL2Methods(cc)
+	generateTL2Decoder(cc, name, func() {
+		cc.AddLinef("let (index, object) = crate::tl2::read_object(buf)?;")
+		cc.AddLinef("match index {")
+		cc.FinishBlock(func() {
+			for index, field := range trw.Fields {
+				if field.t.IsTrueType() {
+					cc.AddLinef("%d => Ok(%s::%s),", index, name, field.goName)
+					continue
+				}
+				payload := field.t.rustModule() + "::decode_tl2_fields(object)?"
+				if field.recursive {
+					payload = "Box::new(" + payload + ")"
+				}
+				cc.AddLinef("%d => Ok(%s::%s(%s)),", index, name, field.goName, payload)
+			}
+			cc.AddLinef("index => Err(basictl::Error::UnexpectedConstructor(index)),")
+		}, "}")
+	})
+	generateTL2Encoder(cc, name, func() {
+		cc.AddLinef("match value {")
+		cc.FinishBlock(func() {
+			for index, field := range trw.Fields {
+				if field.t.IsTrueType() {
+					cc.AddLinef("%s::%s => crate::tl2::write_object(buf, %d, omit_empty, |_| Ok(())),", name, field.goName, index)
+					continue
+				}
+				cc.AddLinef("%s::%s(payload) => %s,", name, field.goName, field.t.writeTL2("buf", "payload", "omit_empty"))
+			}
+		}, "}")
+	})
 }

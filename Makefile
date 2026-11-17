@@ -271,8 +271,8 @@ testrust: build
 		--schemaCommit=abcdefgh \
 		--schemaTimestamp=301822800 \
 		./$(TLS_PATH)/goldmaster.tl ./$(TLS_PATH)/goldmaster2.tl ./$(TLS_PATH)/goldmaster3.tl
-	@cargo check --offline --manifest-path ./target/gentl/Cargo.toml
-	@cargo check --offline --manifest-path ./target/gengoldmaster/Cargo.toml
+	@cargo check --manifest-path ./target/gentl/Cargo.toml
+	@cargo check --manifest-path ./target/gengoldmaster/Cargo.toml
 	@$(GO) test -count=1 ./internal/puregen/genrust
 
 # /home/user/go/src/gitlab.mvk.com/go/vkgo/pkg/vktl/combined.tl

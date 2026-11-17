@@ -11,9 +11,14 @@ pub enum Error {
     UnexpectedMagic(u32),
     InvalidLength,
     InvalidPadding,
-    MissingRecursiveValue,
+    MissingField(&'static str),
+    UnexpectedConstructor(usize),
     NoTL1(&'static str),
     UnsupportedFunction,
+    InvalidJson(String),
+    MissingRpcPayload,
+    WrongRpcResponse,
+    NoTL2(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -26,9 +31,14 @@ impl fmt::Display for Error {
             Self::UnexpectedMagic(tag) => write!(f, "unexpected TL1 tag #{tag:08x}"),
             Self::InvalidLength => f.write_str("invalid TL1 length"),
             Self::InvalidPadding => f.write_str("non-zero TL1 string padding"),
-            Self::MissingRecursiveValue => f.write_str("missing recursive TL1 field"),
+            Self::MissingField(field) => write!(f, "missing field {field}"),
+            Self::UnexpectedConstructor(index) => write!(f, "unexpected TL2 constructor {index}"),
             Self::NoTL1(name) => write!(f, "{name} has no TL1 representation"),
             Self::UnsupportedFunction => f.write_str("generic function wrappers are unsupported"),
+            Self::InvalidJson(reason) => write!(f, "invalid TL-JSON: {reason}"),
+            Self::MissingRpcPayload => f.write_str("missing nested RPC request or response"),
+            Self::WrongRpcResponse => f.write_str("response does not match the RPC request"),
+            Self::NoTL2(name) => write!(f, "{name} has no generated TL2 codec"),
         }
     }
 }
@@ -41,13 +51,13 @@ const MAX_SHORT: usize = 253;
 const MAX_MEDIUM: usize = (1 << 24) - 1;
 const MAX_LONG: u64 = (1 << 56) - 1;
 
-fn take<'a>(input: &mut &'a [u8], count: usize) -> Result<&'a [u8]> {
+pub(crate) fn take<'a>(input: &mut &'a [u8], count: usize) -> Result<&'a [u8]> {
     let (value, rest) = input.split_at_checked(count).ok_or(Error::UnexpectedEof)?;
     *input = rest;
     Ok(value)
 }
 
-fn take_array<const N: usize>(input: &mut &[u8]) -> Result<[u8; N]> {
+pub(crate) fn take_array<const N: usize>(input: &mut &[u8]) -> Result<[u8; N]> {
     take(input, N)?.try_into().map_err(|_| Error::UnexpectedEof)
 }
 
@@ -177,4 +187,22 @@ pub(crate) fn append(
         output.truncate(len);
     }
     result
+}
+
+pub(crate) fn read_fixed_sequence<T, const WIDTH: usize>(
+    input: &mut &[u8],
+    count: usize,
+    from_bytes: impl Fn([u8; WIDTH]) -> T,
+) -> Result<Vec<T>> {
+    let len = count.checked_mul(WIDTH).ok_or(Error::InvalidLength)?;
+    let data = take(input, len)?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(count)
+        .map_err(|_| Error::InvalidLength)?;
+    values.extend(
+        data.chunks_exact(WIDTH)
+            .map(|chunk| from_bytes(chunk.try_into().expect("exact-width chunk"))),
+    );
+    Ok(values)
 }

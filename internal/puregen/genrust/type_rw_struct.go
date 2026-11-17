@@ -77,7 +77,10 @@ func (trw *TypeRWStruct) markHasBytesVersion(visitedNodes map[*TypeRWWrapper]boo
 }
 
 func (trw *TypeRWStruct) markHasRepairMasks(visitedNodes map[*TypeRWWrapper]bool) bool {
-	result := len(trw.AllNewTL2Masks()) != 0 && !trw.wr.OriginTL2()
+	result := false
+	for _, field := range trw.Fields {
+		result = result || (field.MaskTL2Bit() != nil && !trw.wr.OriginTL2())
+	}
 	for _, f := range trw.Fields {
 		result = result || f.t.MarkHasRepairMasks(visitedNodes)
 	}
@@ -228,7 +231,7 @@ func (trw *TypeRWStruct) typeWritingCode(val string, bare bool, natArgs []string
 	if trw.isUnwrapType() {
 		return prefix + trw.Fields[0].t.TypeWritingCode(val, trw.Fields[0].Bare(), trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref)
 	}
-	return prefix + fmt.Sprintf("crate::types::%s::write_tl1(%s, buf%s)?;", trw.wr.goGlobalName, addAmpersand(ref, val), joinWithCommas(natArgs))
+	return prefix + fmt.Sprintf("crate::types::%s::write_tl1(%s, buf%s%s)?;", trw.wr.goGlobalName, addAmpersand(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
 }
 
 func (trw *TypeRWStruct) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
@@ -237,32 +240,7 @@ func (trw *TypeRWStruct) typeReadingCode(cc *codecreator.RustCodeCreator, bytesV
 		trw.Fields[0].t.TypeReadingCode(cc, bytesVersion, directImports, val, trw.Fields[0].Bare(), trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref)
 		return
 	}
-	cc.AddLinef("crate::types::%s::read_tl1(%s, buf%s)?;", trw.wr.goGlobalName, addMutableRef(ref, val), joinWithCommas(natArgs))
-}
-
-func (trw *TypeRWStruct) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
-	if trw.isTypedef() {
-		return trw.Fields[0].t.TypeJSONEmptyCondition(bytesVersion, val, ref)
-	}
-	return ""
-}
-
-func (trw *TypeRWStruct) typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string {
-	if trw.isUnwrapType() {
-		return trw.Fields[0].t.TypeJSONWritingCode(bytesVersion, directImports, val, trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref, needError)
-	}
-	if needError {
-		return fmt.Sprintf("if w, err = %s.WriteJSONOpt(jctx, w %s); err != nil { return w, err }", val, joinWithCommas(natArgs))
-	} else {
-		return fmt.Sprintf("w = %s.WriteJSONOpt(jctx, w %s)", val, joinWithCommas(natArgs))
-	}
-}
-
-func (trw *TypeRWStruct) typeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string {
-	if trw.isUnwrapType() {
-		return trw.Fields[0].t.TypeJSON2ReadingCode(bytesVersion, directImports, jvalue, val, trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref)
-	}
-	return fmt.Sprintf("if err := %s.ReadJSONGeneral(jctx, %s %s); err != nil { return err }", val, jvalue, joinWithCommas(natArgs))
+	cc.AddLinef("crate::types::%s::read_tl1(%s, buf%s%s)?;", trw.wr.goGlobalName, addMutableRef(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
 }
 
 func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectImports) string {
@@ -273,7 +251,13 @@ func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectIm
 	fieldType := func(field Field) string {
 		typ := field.t.TypeString2(bytesVersion, directImports, false, false)
 		if field.recursive {
-			return "Option<Box<" + typ + ">>"
+			typ = "Box<" + typ + ">"
+		}
+		if field.hasPresence() {
+			typ = "Option<" + typ + ">"
+		}
+		if field.IsBit() {
+			return "bool"
 		}
 		return typ
 	}
@@ -284,7 +268,7 @@ func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectIm
 		cc.AddLinef("pub struct %s {", name)
 		cc.FinishBlock(func() {
 			for _, field := range trw.Fields {
-				if !field.IsTL2Omitted() && (!field.IsBit() || trw.wr.OriginTL2()) {
+				if !field.IsTL2Omitted() {
 					cc.AddLinef("pub %s: %s,", field.goName, fieldType(field))
 				}
 			}
@@ -297,7 +281,7 @@ func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectIm
 		cc.FinishBlock(func() {
 			if tupleStruct {
 				defaultValue := "None"
-				if !trw.Fields[0].recursive {
+				if !trw.Fields[0].hasPresence() {
 					defaultValue = rustDefault(trw.Fields[0].t)
 				}
 				cc.AddLinef("Self(%s)", defaultValue)
@@ -306,11 +290,13 @@ func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectIm
 			cc.AddLinef("Self {")
 			cc.FinishBlock(func() {
 				for _, field := range trw.Fields {
-					if field.IsTL2Omitted() || (field.IsBit() && !trw.wr.OriginTL2()) {
+					if field.IsTL2Omitted() {
 						continue
 					}
 					defaultValue := "None"
-					if !field.recursive {
+					if field.IsBit() {
+						defaultValue = "false"
+					} else if !field.hasPresence() {
 						defaultValue = rustDefault(field.t)
 					}
 					cc.AddLinef("%s: %s,", field.goName, defaultValue)
@@ -343,7 +329,7 @@ func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectIm
 }
 
 func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field Field, write bool, bytesVersion bool, directImports *DirectImports) {
-	if field.IsBit() && field.Bare() {
+	if field.IsBit() && field.Bare() && write {
 		return
 	}
 	body := func() {
@@ -351,24 +337,25 @@ func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field
 			if write {
 				cc.AddLinef("basictl::write_tag(buf, 0x%08x);", field.t.TLTag())
 			} else {
-				readTag(cc, false, field.t.TLTag())
+				readTag(cc, field.Bare(), field.t.TLTag())
+				cc.AddLinef("value.%s = true;", field.goName)
 			}
 			return
 		}
 		fieldAccess := "value." + field.goName
 		natArgs := trw.wr.formatNatArgs(trw.Fields, field.NatArgs())
-		if field.recursive {
-			if write {
-				cc.AddLinef("let field = %s.as_deref().ok_or(basictl::Error::MissingRecursiveValue)?;", fieldAccess)
-			} else {
-				cc.AddLinef("let field = %s.get_or_insert_with(|| Box::new(%s)).as_mut();", fieldAccess, rustDefault(field.t))
-			}
-			fieldAccess = "field"
-		}
-		if write {
-			cc.AddLines(strings.Split(field.t.TypeWritingCode(fieldAccess, field.Bare(), natArgs, field.recursive), "\n")...)
+		if write && field.hasPresence() {
+			access := ifString(field.recursive, "as_deref", "as_ref")
+			cc.AddLinef("let field = %s.%s().ok_or(basictl::Error::MissingField(%q))?;", fieldAccess, access, field.OriginalName())
+			cc.AddLines(strings.Split(field.t.TypeWritingCode("field", field.Bare(), natArgs, true), "\n")...)
+		} else if write {
+			cc.AddLines(strings.Split(field.t.TypeWritingCode(fieldAccess, field.Bare(), natArgs, false), "\n")...)
+		} else if field.hasPresence() {
+			cc.AddLinef("let mut field = %s;", rustDefault(field.t))
+			field.t.TypeReadingCode(cc, bytesVersion, directImports, "field", field.Bare(), natArgs, false)
+			cc.AddLinef("%s = %s;", fieldAccess, field.wrapDecoded("field"))
 		} else {
-			field.t.TypeReadingCode(cc, bytesVersion, directImports, fieldAccess, field.Bare(), natArgs, field.recursive)
+			field.t.TypeReadingCode(cc, bytesVersion, directImports, fieldAccess, field.Bare(), natArgs, false)
 		}
 	}
 	if field.FieldMask() == nil {
@@ -376,16 +363,5 @@ func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field
 		return
 	}
 	mask := trw.wr.formatNatArg(trw.Fields, *field.FieldMask())
-	condition := fmt.Sprintf("%s & (1 << %d) != 0", mask, field.BitNumber())
-	if write || field.IsBit() {
-		cc.If(condition, body)
-		return
-	}
-	cc.IfElse(condition, body, func() {
-		defaultValue := "None"
-		if !field.recursive {
-			defaultValue = rustDefault(field.t)
-		}
-		cc.AddLinef("value.%s = %s;", field.goName, defaultValue)
-	})
+	cc.If(fmt.Sprintf("%s & (1 << %d) != 0", mask, field.BitNumber()), body)
 }

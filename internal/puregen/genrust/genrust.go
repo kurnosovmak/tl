@@ -22,6 +22,12 @@ import (
 //go:embed basictl.rs
 var basicTL string
 
+//go:embed tl2.rs
+var tl2Runtime string
+
+//go:embed json.rs
+var jsonRuntime string
+
 type genRust struct {
 	kernel  *pure.Kernel
 	options *puregen.Options
@@ -37,25 +43,8 @@ type genRust struct {
 }
 
 func Generate(kernel *pure.Kernel, options *puregen.Options) error {
-	options.Kernel.InstantiateConstants = true
-	// uncomment for testing behavior relevant for PHP generator
-	// options.Kernel.InstantiateExclamationWrappers = true
-	if err := kernel.Compile(); err != nil {
-		return err
-	}
-	gen := genRust{
-		kernel:         kernel,
-		options:        options,
-		Namespaces:     map[string]*Namespace{},
-		generatedTypes: map[string]*TypeRWWrapper{},
-	}
-	gen.bytesWhiteList = pure.NewWhiteList("--generateByteVersions", options.BytesWhiteList)
-	gen.rawHandlerWhileList = pure.NewWhiteList("--rawHandlerWhiteList", options.Go.RawHandlerWhileList)
-	// Reserve names that generated declarations could shadow inside their modules.
-	for _, name := range []string{"Self", "Default", "Option", "Vec", "Box", "Some", "None", "Ok", "Err"} {
-		gen.globalDec.DeconflictName(name)
-	}
-	if err := gen.compile(); err != nil {
+	gen, err := compileRust(kernel, options)
+	if err != nil {
 		return err
 	}
 	if err := gen.generateCode(); err != nil {
@@ -71,12 +60,42 @@ func Generate(kernel *pure.Kernel, options *puregen.Options) error {
 	return nil
 }
 
+func compileRust(kernel *pure.Kernel, options *puregen.Options) (*genRust, error) {
+	options.Kernel.InstantiateConstants = true
+	if err := kernel.Compile(); err != nil {
+		return nil, err
+	}
+	gen := genRust{
+		kernel:         kernel,
+		options:        options,
+		Namespaces:     map[string]*Namespace{},
+		generatedTypes: map[string]*TypeRWWrapper{},
+	}
+	gen.bytesWhiteList = pure.NewWhiteList("--generateByteVersions", options.BytesWhiteList)
+	gen.rawHandlerWhileList = pure.NewWhiteList("--rawHandlerWhiteList", options.Go.RawHandlerWhileList)
+	// Reserve names that generated declarations could shadow inside their modules.
+	for _, name := range []string{"Self", "Default", "Option", "Vec", "Box", "Some", "None", "Ok", "Err"} {
+		gen.globalDec.DeconflictName(name)
+	}
+	if err := gen.compile(); err != nil {
+		return nil, err
+	}
+	return &gen, nil
+}
+
 func (gen *genRust) generateCode() error {
 	var outdir puregen.OutDir
 	var filenames puregen.Deconflicter
 	modules := codecreator.NewRustCodeCreator()
 	for _, typeRw := range gen.generatedTypesList {
 		code := typeRw.trw.GenerateCode(false, &DirectImports{})
+		if typeRw.HasTL2() {
+			code += typeRw.generateTL2()
+		}
+		code += typeRw.generateJSON()
+		if function, ok := typeRw.trw.(*TypeRWStruct); ok && function.ResultType != nil {
+			code += function.generateRPC()
+		}
 		if code == "" {
 			continue
 		}
@@ -102,6 +121,15 @@ rust-version = "1.85"
 [lints.rust]
 non_snake_case = "allow"
 unused = "allow"
+
+[features]
+default = ["tl-json"]
+tl-json = ["dep:base64", "dep:serde", "dep:serde_json"]
+
+[dependencies]
+base64 = { version = "0.22", optional = true }
+serde = { version = "1", optional = true }
+serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 `, gen.options.Rust.CrateName)
 	if err := outdir.AddCodeFile("Cargo.toml", code); err != nil {
 		return err
@@ -111,7 +139,21 @@ unused = "allow"
 	if err := outdir.AddCodeFile(".gitignore", code); err != nil {
 		return err
 	}
-	code = "pub mod basictl;\npub mod types;\n"
+	code = `pub mod basictl;
+mod tl2;
+pub mod types;
+
+#[cfg(feature = "tl-json")]
+mod json;
+#[cfg(feature = "tl-json")]
+pub use json::JsonMode;
+`
+	if rpc := gen.generateRPC(); rpc != "" {
+		code += "\npub mod rpc;\n"
+		if err := outdir.AddCodeFile("src/rpc.rs", gen.options.CopyrightText+"\n"+rpc); err != nil {
+			return err
+		}
+	}
 	if err := outdir.AddCodeFile("src/lib.rs", code); err != nil {
 		return err
 	}
@@ -120,6 +162,14 @@ unused = "allow"
 	}
 
 	if err := outdir.AddCodeFile("src/types/mod.rs", modules.Text()); err != nil {
+		return err
+	}
+
+	if err := outdir.AddCodeFile("src/tl2.rs", tl2Runtime); err != nil {
+		return err
+	}
+
+	if err := outdir.AddCodeFile("src/json.rs", jsonRuntime); err != nil {
 		return err
 	}
 

@@ -267,19 +267,6 @@ func (w *TypeRWWrapper) TypeReadingCode(cc *codecreator.RustCodeCreator, bytesVe
 	bytesVersion = bytesVersion && w.hasBytesVersion
 	w.trw.typeReadingCode(cc, bytesVersion, directImports, val, bare, natArgs, ref)
 }
-func (w *TypeRWWrapper) TypeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
-	bytesVersion = bytesVersion && w.hasBytesVersion
-	return w.trw.typeJSONEmptyCondition(bytesVersion, val, ref)
-}
-func (w *TypeRWWrapper) TypeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string {
-	bytesVersion = bytesVersion && w.hasBytesVersion
-	return w.trw.typeJSONWritingCode(bytesVersion, directImports, val, natArgs, ref, needError)
-}
-
-func (w *TypeRWWrapper) TypeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string {
-	bytesVersion = bytesVersion && w.hasBytesVersion
-	return w.trw.typeJSON2ReadingCode(bytesVersion, directImports, jvalue, val, natArgs, ref)
-}
 
 func (w *TypeRWWrapper) IsTrueType() bool {
 	structElement, ok := w.trw.(*TypeRWStruct)
@@ -327,7 +314,12 @@ func (w *TypeRWWrapper) formatNatArg(fields []Field, arg pure.ActualNatArg) stri
 		return strconv.FormatUint(uint64(arg.Number()), 10)
 	}
 	if arg.IsField() {
-		return "value." + fields[arg.FieldIndex()].goName
+		field := fields[arg.FieldIndex()]
+		access := "value." + field.goName
+		if field.hasPresence() {
+			return access + ".unwrap_or_default()"
+		}
+		return access
 	}
 	if arg.NatParamName() != w.NatParams()[arg.FieldIndex()] {
 		panic("error with nat params names")
@@ -347,10 +339,16 @@ func (w *TypeRWWrapper) HasFetcher() bool {
 	return w.pureType.Common().HasFetcher()
 }
 
-//lint:ignore U1000 will be used later
 func (w *TypeRWWrapper) fetcherDecl() string {
 	if w.HasFetcher() {
-		return ", fetcher any"
+		return ", request: &crate::rpc::Request"
+	}
+	return ""
+}
+
+func (w *TypeRWWrapper) fetcherCall() string {
+	if w.HasFetcher() {
+		return ", request"
 	}
 	return ""
 }

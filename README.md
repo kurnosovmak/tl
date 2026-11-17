@@ -38,26 +38,35 @@ go install github.com/VKCOM/tl/cmd/tlgen@latest
 
 ## Rust code generation
 
-`tl2gen` can generate a standalone Rust library for TL1 binary data.
+`tl2gen` generates a Rust library from TL1 (`.tl`) and TL2 (`.tl2`) schemas.
 
 ```sh
-go run ./cmd/tl2gen --language=rust --outdir=./gentl ./schema.tl
+go run ./cmd/tl2gen --language=rust --tl2WhiteList='*' --outdir=./gentl ./schema.tl
 cargo check --manifest-path ./gentl/Cargo.toml
 ```
 
-The generated library requires Rust 1.85 or newer and uses only the standard
-library. The package name defaults to `gentl` and can be set with
-`--crate-name`. Use a dedicated output directory, since regenerating replaces
-its contents.
+The generated library requires Rust 1.85 or newer. The package name defaults to
+`gentl` and can be set with `--crate-name`. Use a dedicated output directory,
+since regenerating replaces its contents.
 
-Types are available in `gentl::types`. Use `read_tl1` and `write_tl1` for
-bare values and the `_boxed` methods for values with a constructor tag.
-TL strings are represented as `Vec<u8>` so they can preserve arbitrary bytes.
+Generated types live in `gentl::types`. Unions and enumerations use Rust
+`enum`s, with typed payloads on variants that carry data. TL strings use
+`Vec<u8>`, and TL2 optional fields use `Option<T>`.
 
-The Rust backend is experimental. TL2 binary codecs, TL-JSON, generic
-function wrappers, and RPC client/server generation are outside its current
-scope. Run `make testrust` to compile the generated libraries and test TL1
-compatibility with the Go backend.
+- Use `read_tl1` and `write_tl1` for bare values and the `_boxed` methods
+  for values with a constructor tag. TL1 field masks control TL1 presence.
+- Use `read_tl2` and `write_tl2` for TL2 binary values. For TL1 schemas,
+  `--tl2WhiteList` selects which types also get TL2 codecs.
+- Use `read_json` and `write_json` with `JsonMode` to select TL1, legacy
+  tagged TL1, or TL2 names. The default `tl-json` Cargo feature enables
+  the JSON codecs. Build with `--no-default-features` for binary codecs
+  using only the standard library.
+- RPC functions have typed result codecs. `gentl::rpc::Request` and
+  `Response` encode and dispatch RPC payloads, including legacy TL1
+  `!X` wrappers. The application provides the network transport.
+
+The Rust backend is experimental. Run `make testrust` to compile the generated
+libraries and check binary and TL-JSON compatibility against the Go backend.
 
 ## Documentation
 

@@ -7,7 +7,6 @@
 package genrust
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/VKCOM/tl/internal/pure"
@@ -76,6 +75,17 @@ func (f *Field) IsBit() bool {
 	return f.pureField.IsBit()
 }
 
-func (f *Field) TL2MaskForOP(op string) string {
-	return fmt.Sprintf("tl2mask%d %s %d", *f.MaskTL2Bit()/8, op, 1<<(*f.MaskTL2Bit()%8))
+// The TL2 presence flag is independent of the legacy TL1 bitmask.
+func (f Field) hasPresence() bool {
+	return !f.IsBit() && (f.recursive || f.MaskTL2Bit() != nil)
+}
+
+func (field Field) wrapDecoded(expr string) string {
+	if field.recursive {
+		expr = "Box::new(" + expr + ")"
+	}
+	if field.hasPresence() {
+		expr = "Some(" + expr + ")"
+	}
+	return expr
 }

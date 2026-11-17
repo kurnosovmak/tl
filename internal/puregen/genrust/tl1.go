@@ -51,7 +51,8 @@ func rustDefault(wrapper *TypeRWWrapper) string {
 }
 
 func (wr *TypeRWWrapper) generateTL1Methods(cc *codecreator.RustCodeCreator, publicSuffix, internalSuffix string, withTag bool) {
-	natDecl, natCall := wr.formatNatArgsDecl(), wr.formatNatArgsDeclCall()
+	natDecl := wr.formatNatArgsDecl() + wr.fetcherDecl()
+	natCall := wr.formatNatArgsDeclCall() + wr.fetcherCall()
 	cc.AddLinef("pub fn read_tl1%s(&mut self, buf: &mut &[u8]%s) -> basictl::Result<()> {", publicSuffix, natDecl)
 	cc.FinishBlock(func() {
 		cc.AddLinef("let mut input = *buf;")
@@ -77,7 +78,7 @@ func (wr *TypeRWWrapper) generateTL1Methods(cc *codecreator.RustCodeCreator, pub
 }
 
 func (wr *TypeRWWrapper) generateTL1Functions(cc *codecreator.RustCodeCreator, suffix, typeName string, read, write func()) {
-	natDecl := wr.formatNatArgsDecl()
+	natDecl := wr.formatNatArgsDecl() + wr.fetcherDecl()
 	cc.AddLinef("pub(crate) fn read_tl1%s(value: &mut %s, buf: &mut &[u8]%s) -> basictl::Result<()> {", suffix, typeName, natDecl)
 	cc.FinishBlock(func() {
 		if wr.OriginTL2() {
@@ -97,6 +98,13 @@ func (wr *TypeRWWrapper) generateTL1Functions(cc *codecreator.RustCodeCreator, s
 	}, "}")
 }
 
+func (wr *TypeRWWrapper) fixedSequenceDecoder() string {
+	if typ, ok := wr.trw.(*TypeRWPrimitive); ok && wr.tl2FixedWidth() != 0 {
+		return typ.goType + "::from_le_bytes"
+	}
+	return ""
+}
+
 func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, length string, bytesVersion bool, imports *DirectImports) string {
 	cc := codecreator.NewRustCodeCreator()
 	addTL1Import(cc)
@@ -112,6 +120,8 @@ func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, leng
 			cc.For("element", "value.iter_mut()", "", func() {
 				element.t.TypeReadingCode(cc, bytesVersion, imports, "element", element.Bare(), natArgs, true)
 			})
+		} else if decoder := element.t.fixedSequenceDecoder(); decoder != "" && element.Bare() {
+			cc.AddLinef("*value = basictl::read_fixed_sequence(buf, %s as usize, %s)?;", count, decoder)
 		} else {
 			cc.AddLinef("value.clear();")
 			cc.For("_", "0.."+count, "", func() {

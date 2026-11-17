@@ -1,76 +1,30 @@
-// Copyright 2025 V Kontakte LLC
-//
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package genrust
 
-import "fmt"
+import "github.com/VKCOM/tl/internal/tlcodegen/codecreator"
 
-func (trw *TypeRWMaybe) calculateLayoutCall(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetSizes string,
-	targetObject string,
-	zeroIfEmpty bool,
-	refObject bool,
-) string {
-	sz := fmt.Sprintf("%[1]s, sz = %[2]s.CalculateLayout(%[1]s, %[3]v)", targetSizes, addAsteriskAndBrackets(refObject, targetObject), zeroIfEmpty)
-	if zeroIfEmpty {
-		sz = fmt.Sprintf("if %s; sz != 0 {", sz)
-	}
-	return sz + "\ncurrentSize += sz"
-}
-
-func (trw *TypeRWMaybe) writeTL2Call(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetSizes string,
-	targetBytes string,
-	targetObject string,
-	zeroIfEmpty bool,
-
-	refObject bool,
-) string {
-	sz := fmt.Sprintf("%[3]s, %[1]s, %[5]s = %[2]s.InternalWriteTL2(%[3]s, %[1]s, %[4]v)",
-		targetSizes,
-		targetObject,
-		targetBytes,
-		zeroIfEmpty,
-		ifString(zeroIfEmpty, "sz", "_"),
-	)
-	if zeroIfEmpty {
-		sz = fmt.Sprintf("if %s; sz != 0 {", sz)
-	}
-	return sz
-}
-
-func (trw *TypeRWMaybe) readTL2Call(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetBytes string,
-	targetObject string,
-	canDependOnLocalBit bool,
-
-	refObject bool,
-) string {
-	return fmt.Sprintf("if %[3]s, err = %[2]s.InternalReadTL2(%[3]s); err != nil { return %[3]s, err }",
-		"",
-		addAsteriskAndBrackets(refObject, targetObject),
-		targetBytes,
-	)
-}
-
-func (trw *TypeRWMaybe) skipTL2Call(
-	directImports *DirectImports,
-	bytesVersion bool,
-	targetBytes string,
-	canDependOnLocalBit bool,
-
-	refObject bool,
-) string {
-	return fmt.Sprintf(`if %[2]s, err = basictl.SkipSizedValue(%[2]s); err != nil { return %[2]s, err }`,
-		"",
-		targetBytes)
+func (trw *TypeRWMaybe) generateTL2(cc *codecreator.RustCodeCreator) {
+	typ := trw.wr.rustType()
+	generateTL2Decoder(cc, typ, func() {
+		cc.AddLinef("let (index, mut object) = crate::tl2::read_object(buf)?;")
+		cc.AddLinef("match index {")
+		cc.FinishBlock(func() {
+			cc.AddLinef("0 => Ok(None),")
+			cc.AddLinef("1 if object.mask & 2 != 0 => Ok(Some(%s?)),", trw.element.t.readTL2("&mut object.data"))
+			cc.AddLinef("1 => Ok(Some(%s)),", rustDefault(trw.element.t))
+			cc.AddLinef("index => Err(basictl::Error::UnexpectedConstructor(index)),")
+		}, "}")
+	})
+	generateTL2Encoder(cc, typ, func() {
+		cc.AddLinef("crate::tl2::write_object(buf, usize::from(value.is_some()), omit_empty, |object| {")
+		cc.FinishBlock(func() {
+			cc.If("let Some(element) = value", func() {
+				cc.AddLinef("object.field(2, false, |buf| %s)?;", trw.element.t.writeTL2("buf", "element", "true"))
+			})
+			cc.AddLinef("Ok(())")
+		}, "})")
+	})
 }

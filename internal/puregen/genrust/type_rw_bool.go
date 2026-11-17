@@ -78,23 +78,18 @@ func (trw *TypeRWBool) typeRepairMasksCode(bytesVersion bool, directImports *Dir
 }
 
 func (trw *TypeRWBool) typeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
+	if trw.isBit {
+		return `return Err(basictl::Error::NoTL1("bit"));`
+	}
 	return fmt.Sprintf("crate::types::%s::write_tl1(%s, buf)?;", trw.wr.goGlobalName, addAsterisk(ref, val))
 }
 
 func (trw *TypeRWBool) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
+	if trw.isBit {
+		cc.AddLinef(`return Err(basictl::Error::NoTL1("bit"));`)
+		return
+	}
 	cc.AddLinef("%s = crate::types::%s::read_tl1(buf)?;", addAsterisk(ref, val), trw.wr.goGlobalName)
-}
-
-func (trw *TypeRWBool) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
-	return addAsterisk(ref, val)
-}
-
-func (trw *TypeRWBool) typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string {
-	return fmt.Sprintf("w = basictl.JSONWriteBool(w, %s)", addAsterisk(ref, val))
-}
-
-func (trw *TypeRWBool) typeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string {
-	return wrapLast(false, fmt.Sprintf("%sJson2ReadBool(%s, %s)", trw.wr.gen.InternalPrefix(), jvalue, addAmpersand(ref, val)))
 }
 
 func (trw *TypeRWBool) GenerateCode(bytesVersion bool, directImports *DirectImports) string {

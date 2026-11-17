@@ -17,13 +17,11 @@ type TypeRWPrimitive struct {
 
 	historicalName string // go generator historically uses TL1-style names
 
-	goType         string
-	resetValue     string
-	randomValue    string
-	writeValue     string
-	readValue      string
-	writeJSONValue string
-	readJSON2Value string
+	goType      string
+	resetValue  string
+	randomValue string
+	writeValue  string
+	readValue   string
 }
 
 var _ TypeRW = &TypeRWPrimitive{}
@@ -96,45 +94,25 @@ func (trw *TypeRWPrimitive) typeWritingCode(val string, bare bool, natArgs []str
 	switch trw.canonicalType {
 	case "string":
 		return fmt.Sprintf("basictl::write_string(buf, %s)?;", addAmpersand(ref, val))
-	case "__function", "__function_result":
-		return "return Err(basictl::Error::UnsupportedFunction);"
+	case "__function":
+		return fmt.Sprintf("(%s).as_deref().ok_or(basictl::Error::MissingRpcPayload)?.write_tl1(buf)?;", val)
+	case "__function_result":
+		return fmt.Sprintf("request.write_response_tl1((%s).as_deref().ok_or(basictl::Error::MissingRpcPayload)?, buf)?;", val)
 	default:
 		return fmt.Sprintf("buf.extend_from_slice(&(%s).to_le_bytes());", val)
 	}
 }
 
-func (trw *TypeRWPrimitive) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
-	if trw.canonicalType == "string" {
-		return fmt.Sprintf("len(%s) != 0", addAsterisk(ref, val))
-	}
-	if trw.canonicalType == "__function" || trw.canonicalType == "__function_result" {
-		return "true"
-	}
-	return fmt.Sprintf("%s != 0", addAsterisk(ref, val))
-}
-
 func (trw *TypeRWPrimitive) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
-	if trw.canonicalType == "__function" || trw.canonicalType == "__function_result" {
-		cc.AddLinef("return Err(basictl::Error::UnsupportedFunction);")
-		return
+	target := addAsterisk(ref, val)
+	switch trw.canonicalType {
+	case "__function":
+		cc.AddLinef("%s = Some(Box::new(crate::rpc::Request::read_tl1(buf)?));", target)
+	case "__function_result":
+		cc.AddLinef("%s = Some(Box::new(request.read_response_tl1(buf)?));", target)
+	default:
+		cc.AddLinef(trw.readValue, target)
 	}
-	cc.AddLinef(trw.readValue, addAsterisk(ref, val))
-}
-
-func (trw *TypeRWPrimitive) typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string {
-	writeJSONValue := trw.writeJSONValue
-	if bytesVersion {
-		writeJSONValue += "Bytes"
-	}
-	return fmt.Sprintf("w = %s(w, %s)", writeJSONValue, addAsterisk(ref, val))
-}
-
-func (trw *TypeRWPrimitive) typeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string {
-	readJSONValue := trw.readJSON2Value
-	if bytesVersion {
-		readJSONValue += "Bytes"
-	}
-	return wrapLast(false, fmt.Sprintf("%s(%s, %s)", readJSONValue, jvalue, addAmpersand(ref, val)))
 }
 
 func (trw *TypeRWPrimitive) GenerateCode(byteVersion bool, directImports *DirectImports) string {

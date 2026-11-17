@@ -7,8 +7,6 @@
 package genrust
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"strings"
 
@@ -36,12 +34,7 @@ type TypeRW interface {
 	typeRepairMasksCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool) string
 	typeWritingCode(val string, bare bool, natArgs []string, ref bool) string
 	typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool)
-	typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string
-	typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string
-	typeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string
 	GenerateCode(bytesVersion bool, directImports *DirectImports) string
-
-	TypeRWTL2
 }
 
 // simply adds commas, natArgs are already fully formatted. Difference to strings.Join is leading comma
@@ -69,29 +62,11 @@ func addMutableRef(ref bool, val string) string {
 	return ifString(ref, val, "&mut "+val)
 }
 
-func addAsteriskAndBrackets(ref bool, val string) string {
-	return ifString(ref, "(*"+val+")", val)
-}
-
-func wrapLast(last bool, code string) string {
-	return ifString(last, "return "+code+"", "if err := "+code+"; err != nil { return err }")
-}
-
 func ifString(value bool, t string, f string) string {
 	if value {
 		return t
 	}
 	return f
-}
-
-// must be deterministic.
-// we use it to mark sizes during TL2 serialization. tlTag does not work,
-// because it resets to 0 for most types during TL2 migration
-//
-//lint:ignore U1000 will use for TL2 later
-func someHash(str string) uint32 {
-	h := sha256.Sum256([]byte(str))
-	return binary.LittleEndian.Uint32(h[:])
 }
 
 func ToUpperFirst(str string) string {
