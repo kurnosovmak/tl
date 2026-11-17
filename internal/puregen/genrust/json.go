@@ -140,6 +140,9 @@ func (wr *TypeRWWrapper) generateJSONMethods(cc *codecreator.RustCodeCreator) {
 				vector.generateWrite(cc)
 				return
 			}
+			if wr.generateJSONStream(cc) {
+				return
+			}
 			cc.AddLinef("let data = encode_json(self, mode%s)?;", natCall)
 			cc.AddLinef("basictl::append(buf, |buf| json::serialize(&data, buf))")
 		}, "}")

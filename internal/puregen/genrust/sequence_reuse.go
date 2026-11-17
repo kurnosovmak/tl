@@ -48,7 +48,7 @@ func (trw *TypeRWStruct) independentVector() independentVector {
 		return independentVector{}
 	}
 	element, ok := vector.element.t.trw.(*TypeRWPrimitive)
-	if !ok || element.canonicalType != "string" && vector.element.t.fixedSequenceDecoder() == "" {
+	if !ok || element.canonicalType != "string" && vector.element.t.fixedSequencePrimitive() == "" {
 		return independentVector{}
 	}
 	path.element = element

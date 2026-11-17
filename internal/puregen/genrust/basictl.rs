@@ -209,6 +209,33 @@ pub(crate) fn append(
     result
 }
 
+#[inline]
+pub(crate) fn write_fixed_sequence<T: Copy, const WIDTH: usize>(
+    output: &mut Vec<u8>,
+    values: &[T],
+    to_bytes: impl Fn(T) -> [u8; WIDTH],
+) -> Result<()> {
+    if values.len() <= 8 {
+        for &value in values {
+            output.extend_from_slice(&to_bytes(value));
+        }
+        return Ok(());
+    }
+
+    let len = values
+        .len()
+        .checked_mul(WIDTH)
+        .ok_or(Error::InvalidLength)?;
+    let start = output.len();
+    let end = start.checked_add(len).ok_or(Error::InvalidLength)?;
+    output.try_reserve(len).map_err(|_| Error::InvalidLength)?;
+    output.resize(end, 0);
+    for (chunk, &value) in output[start..].chunks_exact_mut(WIDTH).zip(values) {
+        chunk.copy_from_slice(&to_bytes(value));
+    }
+    Ok(())
+}
+
 pub(crate) fn read_fixed_sequence<T, const WIDTH: usize>(
     input: &mut &[u8],
     count: usize,

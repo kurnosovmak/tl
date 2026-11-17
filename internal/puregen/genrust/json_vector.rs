@@ -6,6 +6,7 @@ use crate::{
     basictl::{self, Result},
     json,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::str::FromStr;
 
 const BYTE_ONES: u64 = 0x0101_0101_0101_0101;
@@ -46,7 +47,17 @@ pub(crate) fn write_bytes(buf: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     } else if let Ok(text) = std::str::from_utf8(bytes) {
         serde_json::to_writer(buf, text).map_err(|err| json::error(err.to_string()))?;
     } else {
-        json::serialize(&json::write_bytes(bytes), buf)?;
+        let len = base64::encoded_len(bytes.len(), true).ok_or(basictl::Error::InvalidLength)?;
+        buf.extend_from_slice(br#"{"base64":""#);
+        let start = buf.len();
+        let end = start
+            .checked_add(len)
+            .ok_or(basictl::Error::InvalidLength)?;
+        buf.resize(end, 0);
+        STANDARD
+            .encode_slice(bytes, &mut buf[start..])
+            .expect("exact base64 length");
+        buf.extend_from_slice(br#""}"#);
     }
     Ok(())
 }

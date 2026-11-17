@@ -98,8 +98,34 @@ pub(crate) fn parse(input: &[u8]) -> Result<Value> {
         .map_err(|err| error(err.to_string()))
 }
 
-pub(crate) fn serialize(value: &Value, buf: &mut Vec<u8>) -> Result<()> {
+pub(crate) fn serialize(value: &(impl serde::Serialize + ?Sized), buf: &mut Vec<u8>) -> Result<()> {
     serde_json::to_writer(buf, value).map_err(|err| error(err.to_string()))
+}
+
+#[inline]
+pub(crate) fn field_name(buf: &mut Vec<u8>, start: usize, name: &[u8]) {
+    if buf.len() != start {
+        buf.push(b',');
+    }
+    buf.extend_from_slice(name);
+}
+
+#[inline]
+pub(crate) fn write_array<T>(
+    buf: &mut Vec<u8>,
+    values: &[T],
+    write: impl Fn(&mut Vec<u8>, &T) -> Result<()>,
+) -> Result<()> {
+    buf.push(b'[');
+    if let Some((first, tail)) = values.split_first() {
+        write(buf, first)?;
+        for value in tail {
+            buf.push(b',');
+            write(buf, value)?;
+        }
+    }
+    buf.push(b']');
+    Ok(())
 }
 
 pub(crate) fn object(value: Option<&Value>) -> Result<&Map<String, Value>> {

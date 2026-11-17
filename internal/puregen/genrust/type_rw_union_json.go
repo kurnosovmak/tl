@@ -50,20 +50,7 @@ func (trw *TypeRWUnion) generateJSON(cc *codecreator.RustCodeCreator) {
 				}
 				cc.AddLinef("%s::%s%s => {", name, variant.goName, pattern)
 				cc.FinishBlock(func() {
-					tlName := variant.t.TLName().String()
-					constructor := strconv.Quote(tlName)
-					if strings.Contains(tlName, "__") {
-						constructor = strconv.Quote(variant.variantName)
-					} else {
-						if !wr.OriginTL2() {
-							legacy := fmt.Sprintf("%s#%08x", tlName, variant.t.TLTag())
-							constructor = fmt.Sprintf("if mode == JsonMode::Legacy { %q } else { %s }", legacy, constructor)
-						}
-						if wr.HasTL2() {
-							constructor = fmt.Sprintf("if mode == JsonMode::Tl2 { %q } else { %s }", variant.variantName, constructor)
-						}
-					}
-					cc.AddLinef("let constructor = %s;", constructor)
+					cc.AddLinef("let constructor = %s;", trw.jsonConstructor(variant))
 					switch {
 					case trw.IsEnum:
 						cc.AddLinef("Ok(constructor.into())")
@@ -91,4 +78,22 @@ func (trw *TypeRWUnion) decodeJSONVariant(cc *codecreator.RustCodeCreator, varia
 		payload = "Box::new(" + payload + ")"
 	}
 	cc.AddLinef("Ok(%s(%s))", name, payload)
+}
+
+func (trw *TypeRWUnion) jsonConstructor(variant Variant) string {
+	wr := trw.wr
+	tlName := variant.t.TLName().String()
+	constructor := strconv.Quote(tlName)
+	if strings.Contains(tlName, "__") {
+		constructor = strconv.Quote(variant.variantName)
+	} else {
+		if !wr.OriginTL2() {
+			legacy := fmt.Sprintf("%s#%08x", tlName, variant.t.TLTag())
+			constructor = fmt.Sprintf("if mode == JsonMode::Legacy { %q } else { %s }", legacy, constructor)
+		}
+		if wr.HasTL2() {
+			constructor = fmt.Sprintf("if mode == JsonMode::Tl2 { %q } else { %s }", variant.variantName, constructor)
+		}
+	}
+	return constructor
 }

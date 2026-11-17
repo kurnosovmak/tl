@@ -142,6 +142,27 @@ fn errors() {
 }
 
 #[test]
+fn fixed_width_vector_appends_little_endian_values() {
+    for len in [0, 1, 7, 8, 9, 33, 1024] {
+        let values: Vec<_> = [i32::MIN, -1, 0, 1, i32::MAX]
+            .into_iter()
+            .cycle()
+            .take(len)
+            .collect();
+        let mut expected = vec![0xaa];
+        expected.extend_from_slice(&(len as u32).to_le_bytes());
+        for value in &values {
+            expected.extend_from_slice(&value.to_le_bytes());
+        }
+        let mut output = vec![0xaa];
+        CasesTestVector { Arr: values }
+            .write_tl1(&mut output)
+            .unwrap();
+        assert_eq!(output, expected);
+    }
+}
+
+#[test]
 fn tl1_huge_string() {
     let value = CasesBytesTestVector {
         Arr: vec![vec![0xff; 1 << 24]],

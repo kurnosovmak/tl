@@ -6,8 +6,6 @@ package genrust
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/VKCOM/tl/internal/tlcodegen/codecreator"
 )
@@ -47,13 +45,22 @@ func (trw *TypeRWStruct) jsonFieldBit(field Field) string {
 
 func (trw *TypeRWStruct) decodeJSONFields(cc *codecreator.RustCodeCreator) {
 	cc.AddLinef("let object = json::object(input)?;")
-	var properties []string
 	for _, field := range trw.Fields {
 		if !field.IsTL2Omitted() {
-			properties = append(properties, strconv.Quote(field.OriginalName()))
+			cc.AddLinef("let mut prop_%s = None;", field.goName)
 		}
 	}
-	cc.AddLinef("json::check_fields(object, &[%s])?;", strings.Join(properties, ", "))
+	cc.For("(key, property)", "object", "", func() {
+		cc.AddLinef("match key.as_str() {")
+		cc.FinishBlock(func() {
+			for _, field := range trw.Fields {
+				if !field.IsTL2Omitted() {
+					cc.AddLinef("%q => prop_%s = Some(property),", field.OriginalName(), field.goName)
+				}
+			}
+			cc.AddLinef("_ => return Err(json::error(format!(\"unexpected property {:?}\", key))),")
+		}, "}")
+	})
 	cc.AddLinef("let mut value = %s::default();", trw.wr.goGlobalName)
 
 	// The mask fields are read first. A JSON property can also set its
@@ -62,7 +69,6 @@ func (trw *TypeRWStruct) decodeJSONFields(cc *codecreator.RustCodeCreator) {
 		if field.IsTL2Omitted() {
 			continue
 		}
-		cc.AddLinef("let prop_%s = object.get(%q);", field.goName, field.OriginalName())
 		if field.IsBit() {
 			cc.AddLinef("value.%s = json::read_bool(prop_%s)?;", field.goName, field.goName)
 		} else if !field.IsTypeDependsFromLocalFields() {
@@ -162,7 +168,29 @@ func (trw *TypeRWStruct) assignJSONField(cc *codecreator.RustCodeCreator, field 
 
 func (trw *TypeRWStruct) encodeJSONFields(cc *codecreator.RustCodeCreator) {
 	cc.AddLinef("let mut object = json::Map::new();")
-	for _, field := range trw.Fields {
+	trw.visitJSONFields(cc, trw.Fields, func(field Field, borrowed string, args []string, required bool) {
+		if field.IsBit() {
+			cc.AddLinef("object.insert(%q.into(), true.into());", field.OriginalName())
+			return
+		}
+		property := field.t.encodeJSON(borrowed, args) + "?"
+		if !required && len(args) != 0 {
+			// Validate nat lengths even if the field will be omitted.
+			cc.AddLinef("let property = %s;", property)
+			property = "property"
+		}
+		insert := func() { cc.AddLinef("object.insert(%q.into(), %s);", field.OriginalName(), property) }
+		if required {
+			insert()
+		} else {
+			cc.If(field.t.jsonNonEmpty(borrowed), insert)
+		}
+	})
+	cc.AddLinef("Ok(json::Value::Object(object))")
+}
+
+func (trw *TypeRWStruct) visitJSONFields(cc *codecreator.RustCodeCreator, fields []Field, write func(Field, string, []string, bool)) {
+	for _, field := range fields {
 		if field.IsTL2Omitted() {
 			continue
 		}
@@ -173,7 +201,7 @@ func (trw *TypeRWStruct) encodeJSONFields(cc *codecreator.RustCodeCreator) {
 				present = trw.jsonFieldBit(field)
 			}
 			cc.If(present, func() {
-				cc.AddLinef("object.insert(%q.into(), true.into());", field.OriginalName())
+				write(field, "", nil, true)
 			})
 			continue
 		}
@@ -182,18 +210,7 @@ func (trw *TypeRWStruct) encodeJSONFields(cc *codecreator.RustCodeCreator) {
 		}
 		args := trw.wr.formatNatArgs(trw.Fields, field.NatArgs())
 		encode := func(borrowed string, required bool) {
-			property := field.t.encodeJSON(borrowed, args) + "?"
-			if !required && len(args) != 0 {
-				// A TL1 tuple must agree with its nat length even when it is empty.
-				cc.AddLinef("let property = %s;", property)
-				property = "property"
-			}
-			insert := func() { cc.AddLinef("object.insert(%q.into(), %s);", field.OriginalName(), property) }
-			if required {
-				insert()
-			} else {
-				cc.If(field.t.jsonNonEmpty(borrowed), insert)
-			}
+			write(field, borrowed, args, required)
 		}
 		if field.hasPresence() {
 			borrow := ifString(field.recursive, "as_deref", "as_ref")
@@ -206,5 +223,4 @@ func (trw *TypeRWStruct) encodeJSONFields(cc *codecreator.RustCodeCreator) {
 			encode("&"+access, false)
 		}
 	}
-	cc.AddLinef("Ok(json::Value::Object(object))")
 }

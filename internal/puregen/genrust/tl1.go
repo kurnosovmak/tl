@@ -101,11 +101,20 @@ func (wr *TypeRWWrapper) generateTL1Functions(cc *codecreator.RustCodeCreator, s
 	}, "}")
 }
 
-func (wr *TypeRWWrapper) fixedSequenceDecoder() string {
+func (wr *TypeRWWrapper) fixedSequencePrimitive() string {
 	if typ, ok := wr.trw.(*TypeRWPrimitive); ok && wr.tl2FixedWidth() != 0 {
-		return typ.goType + "::from_le_bytes"
+		return typ.goType
 	}
 	return ""
+}
+
+func writeFixedSequence(cc *codecreator.RustCodeCreator, primitive string) {
+	if primitive == "u8" {
+		cc.AddLinef("buf.extend_from_slice(value);")
+		cc.AddLinef("Ok(())")
+		return
+	}
+	cc.AddLinef("basictl::write_fixed_sequence(buf, value, %s::to_le_bytes)", primitive)
 }
 
 func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, length string, bytesVersion bool, imports *DirectImports) string {
@@ -123,8 +132,8 @@ func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, leng
 			cc.For("element", "value.iter_mut()", "", func() {
 				element.t.TypeReadingCode(cc, bytesVersion, imports, "element", element.Bare(), natArgs, true)
 			})
-		} else if decoder := element.t.fixedSequenceDecoder(); decoder != "" && element.Bare() {
-			cc.AddLinef("*value = basictl::read_fixed_sequence(buf, %s as usize, %s)?;", count, decoder)
+		} else if primitive := element.t.fixedSequencePrimitive(); primitive != "" && element.Bare() {
+			cc.AddLinef("*value = basictl::read_fixed_sequence(buf, %s as usize, %s::from_le_bytes)?;", count, primitive)
 		} else {
 			cc.AddLinef("value.clear();")
 			cc.For("_", "0.."+count, "", func() {
@@ -143,6 +152,10 @@ func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, leng
 			cc.If("value.len() != "+length+" as usize", func() {
 				cc.AddLinef("return Err(basictl::Error::InvalidLength);")
 			})
+		}
+		if primitive := element.t.fixedSequencePrimitive(); primitive != "" && element.Bare() {
+			writeFixedSequence(cc, primitive)
+			return
 		}
 		cc.For("element", "value", "", func() {
 			cc.AddLines(strings.Split(element.t.TypeWritingCode("element", element.Bare(), natArgs, true), "\n")...)

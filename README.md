@@ -68,6 +68,15 @@ Generated types live in `gentl::types`. Unions and enumerations use Rust
 The Rust backend is experimental. Run `make testrust` to compile the generated
 libraries and check binary and TL-JSON compatibility against the Go backend.
 
+Run `python3 internal/puregen/genrust/testdata/bench/run.py` to benchmark both
+backends on strings, numeric vectors, field masks and nested unions. Each reader
+decodes the other writer's output before timing. Both readers then time the same
+Go input with reusable destinations. Each writer reuses its output buffer.
+The runner alternates languages between rounds and saves per-round medians
+(seven samples each) and their means in `target/rust-bench/{samples,summary}.csv`.
+Use `--verify-only` for the compatibility checks, `--rounds N` to repeat, or
+`--baseline-generator /path/to/tl2gen` to include an earlier Rust backend.
+
 ## Documentation
 
 - [Internals (TL1)](./docs/TLPrimer.pdf) (in Russian)

@@ -94,8 +94,8 @@ func (wr *TypeRWWrapper) generateTL2Sequence(cc *codecreator.RustCodeCreator, el
 		cc.AddLinef("let mut value: %s = %s;", typ, rustDefault(wr))
 		cc.If("data.is_empty()", func() { cc.AddLinef("return Ok(value);") })
 		cc.AddLinef("let count = crate::tl2::read_size(&mut data)?;")
-		if decoder := element.fixedSequenceDecoder(); decoder != "" && !fixed {
-			cc.AddLinef("basictl::read_fixed_sequence(&mut data, count, %s)", decoder)
+		if primitive := element.fixedSequencePrimitive(); primitive != "" && !fixed {
+			cc.AddLinef("basictl::read_fixed_sequence(&mut data, count, %s::from_le_bytes)", primitive)
 			return
 		}
 		if fixed {
@@ -125,6 +125,10 @@ func (wr *TypeRWWrapper) generateTL2Sequence(cc *codecreator.RustCodeCreator, el
 		sizeArg := ifString(size != "", "Some(payload_size_tl2(value))", "None")
 		cc.AddLinef("crate::tl2::write_sequence(buf, value.len(), %s, omit_empty, |buf| {", sizeArg)
 		cc.FinishBlock(func() {
+			if primitive := element.fixedSequencePrimitive(); primitive != "" && dictKey == "" {
+				writeFixedSequence(cc, primitive)
+				return
+			}
 			if packed {
 				cc.For("chunk", "value.chunks(8)", "", func() {
 					cc.AddLinef("let byte = chunk.iter().enumerate().fold(0, |byte, (i, flag)| byte | (u8::from(*flag) << i));")
