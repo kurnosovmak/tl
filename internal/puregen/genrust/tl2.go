@@ -98,12 +98,15 @@ func (wr *TypeRWWrapper) generateTL2Methods(cc *codecreator.RustCodeCreator) {
 		cc.AddLinef("pub fn read_tl2(&mut self, buf: &mut &[u8]) -> basictl::Result<()> {")
 		cc.FinishBlock(func() {
 			cc.AddLinef("let mut input = *buf;")
-			cc.AddLinef("*self = decode_tl2(&mut input)?;")
+			if !reuseVectorTL2(cc, wr) {
+				cc.AddLinef("*self = decode_tl2(&mut input)?;")
+			}
 			cc.AddLinef("*buf = input;")
 			cc.AddLinef("Ok(())")
 		}, "}")
 		cc.AddLinef("pub fn write_tl2(&self, buf: &mut Vec<u8>) -> basictl::Result<()> {")
 		cc.FinishBlock(func() {
+			writeOneStringVector(cc, wr, false)
 			cc.AddLinef("basictl::append(buf, |buf| encode_tl2(self, buf, false))")
 		}, "}")
 	}, "}")

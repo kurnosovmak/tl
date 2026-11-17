@@ -4,6 +4,7 @@
 
 use crate::basictl::{Error, Result, TLRead, take, take_array};
 
+#[inline]
 pub(crate) fn read_size(input: &mut &[u8]) -> Result<usize> {
     match input.read_u8()? {
         254 => Ok(254 + usize::from(u16::from_le_bytes(take_array(input)?))),
@@ -15,6 +16,7 @@ pub(crate) fn read_size(input: &mut &[u8]) -> Result<usize> {
     }
 }
 
+#[inline]
 fn size_bytes(len: usize, bytes: &mut [u8; 9]) -> usize {
     match len {
         0..254 => {
@@ -34,12 +36,14 @@ fn size_bytes(len: usize, bytes: &mut [u8; 9]) -> usize {
     }
 }
 
+#[inline]
 pub(crate) fn write_size(buf: &mut Vec<u8>, len: usize) {
     let mut bytes = [0; 9];
     let width = size_bytes(len, &mut bytes);
     buf.extend_from_slice(&bytes[..width]);
 }
 
+#[inline]
 fn size_width(len: usize) -> usize {
     match len {
         0..254 => 1,
@@ -48,6 +52,7 @@ fn size_width(len: usize) -> usize {
     }
 }
 
+#[inline]
 pub(crate) fn bytes_size(value: &[u8], omit_empty: bool) -> usize {
     if omit_empty && value.is_empty() {
         return 0;
@@ -85,6 +90,7 @@ pub(crate) fn write_single_field(
     Ok(())
 }
 
+#[inline]
 pub(crate) fn write_bytes(buf: &mut Vec<u8>, value: &[u8], omit_empty: bool) -> Result<()> {
     if !omit_empty || !value.is_empty() {
         buf.reserve(size_width(value.len()) + value.len());
@@ -120,6 +126,7 @@ pub(crate) fn write_sequence(
     })
 }
 
+#[inline]
 pub(crate) fn read_sized<'a>(input: &mut &'a [u8]) -> Result<&'a [u8]> {
     let len = read_size(input)?;
     take(input, len)
@@ -216,6 +223,7 @@ impl ObjectReader<'_> {
     }
 }
 
+#[inline]
 pub(crate) fn read_object<'a>(buf: &mut &'a [u8]) -> Result<(usize, ObjectReader<'a>)> {
     let mut data = read_sized(buf)?;
     let mask = data.read_u8().unwrap_or_default();
@@ -225,4 +233,25 @@ pub(crate) fn read_object<'a>(buf: &mut &'a [u8]) -> Result<(usize, ObjectReader
         0
     };
     Ok((index, ObjectReader { data, mask }))
+}
+
+#[inline]
+pub(crate) fn write_one_string_vector(buf: &mut Vec<u8>, text: &[u8]) {
+    let len = text.len();
+    if len < 250 {
+        let len = len as u8;
+        buf.reserve(usize::from(len) + 5);
+        buf.extend_from_slice(&[len + 4, 2, len + 2, 1, len]);
+        buf.extend_from_slice(text);
+        return;
+    }
+    let vector_len = 1 + size_width(len) + len;
+    let object_len = 1 + size_width(vector_len) + vector_len;
+    buf.reserve(size_width(object_len) + object_len);
+    write_size(buf, object_len);
+    buf.push(2);
+    write_size(buf, vector_len);
+    buf.push(1);
+    write_size(buf, len);
+    buf.extend_from_slice(text);
 }

@@ -51,12 +51,14 @@ const MAX_SHORT: usize = 253;
 const MAX_MEDIUM: usize = (1 << 24) - 1;
 const MAX_LONG: u64 = (1 << 56) - 1;
 
+#[inline]
 pub(crate) fn take<'a>(input: &mut &'a [u8], count: usize) -> Result<&'a [u8]> {
     let (value, rest) = input.split_at_checked(count).ok_or(Error::UnexpectedEof)?;
     *input = rest;
     Ok(value)
 }
 
+#[inline]
 pub(crate) fn take_array<const N: usize>(input: &mut &[u8]) -> Result<[u8; N]> {
     take(input, N)?.try_into().map_err(|_| Error::UnexpectedEof)
 }
@@ -120,41 +122,58 @@ impl TLRead for &[u8] {
     }
 
     fn read_string(&mut self, value: &mut Vec<u8>) -> Result<()> {
-        let (len, header_len) = match self.read_u8()? {
-            254 => {
-                let [a, b, c] = take_array(self)?;
-                let len = u32::from_le_bytes([a, b, c, 0]) as usize;
-                if len <= MAX_SHORT {
-                    return Err(Error::InvalidLength);
-                }
-                (len, 4)
-            }
-            255 => {
-                let [a, b, c, d, e, f, g] = take_array(self)?;
-                let len = usize::try_from(u64::from_le_bytes([a, b, c, d, e, f, g, 0]))
-                    .map_err(|_| Error::InvalidLength)?;
-                if len <= MAX_MEDIUM {
-                    return Err(Error::InvalidLength);
-                }
-                (len, 8)
-            }
-            len => (usize::from(len), 1),
-        };
-        let bytes = take(self, len)?;
-        let padding = take(self, (4 - (len % 4 + header_len) % 4) % 4)?;
-        if padding.iter().any(|&byte| byte != 0) {
-            return Err(Error::InvalidPadding);
-        }
-        value.clear();
-        value.extend_from_slice(bytes);
+        replace_bytes(value, read_string_slice(self)?);
         Ok(())
     }
 }
 
+#[inline]
+pub(crate) fn read_string_slice<'a>(input: &mut &'a [u8]) -> Result<&'a [u8]> {
+    let (len, header_len) = match input.read_u8()? {
+        254 => {
+            let [a, b, c] = take_array(input)?;
+            let len = u32::from_le_bytes([a, b, c, 0]) as usize;
+            if len <= MAX_SHORT {
+                return Err(Error::InvalidLength);
+            }
+            (len, 4)
+        }
+        255 => {
+            let [a, b, c, d, e, f, g] = take_array(input)?;
+            let len = usize::try_from(u64::from_le_bytes([a, b, c, d, e, f, g, 0]))
+                .map_err(|_| Error::InvalidLength)?;
+            if len <= MAX_MEDIUM {
+                return Err(Error::InvalidLength);
+            }
+            (len, 8)
+        }
+        len => (usize::from(len), 1),
+    };
+    let padding = (4 - (len % 4 + header_len) % 4) % 4;
+    let total = len.checked_add(padding).ok_or(Error::InvalidLength)?;
+    let (bytes, padding) = take(input, total)?.split_at(len);
+    if padding.iter().any(|&byte| byte != 0) {
+        return Err(Error::InvalidPadding);
+    }
+    Ok(bytes)
+}
+
+#[inline]
+pub(crate) fn replace_bytes(value: &mut Vec<u8>, bytes: &[u8]) {
+    if value.len() == bytes.len() {
+        value.copy_from_slice(bytes);
+    } else {
+        value.clear();
+        value.extend_from_slice(bytes);
+    }
+}
+
+#[inline]
 pub(crate) fn write_tag(output: &mut Vec<u8>, tag: u32) {
     output.extend_from_slice(&tag.to_le_bytes());
 }
 
+#[inline]
 pub(crate) fn write_string(output: &mut Vec<u8>, value: &[u8]) -> Result<()> {
     let len = value.len();
     let len_bytes = (len as u64).to_le_bytes();
@@ -177,6 +196,7 @@ pub(crate) fn write_string(output: &mut Vec<u8>, value: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[inline]
 pub(crate) fn append(
     output: &mut Vec<u8>,
     write: impl FnOnce(&mut Vec<u8>) -> Result<()>,
@@ -194,15 +214,90 @@ pub(crate) fn read_fixed_sequence<T, const WIDTH: usize>(
     count: usize,
     from_bytes: impl Fn([u8; WIDTH]) -> T,
 ) -> Result<Vec<T>> {
+    let mut values = Vec::new();
+    read_fixed_sequence_into(input, count, &mut values, from_bytes)?;
+    Ok(values)
+}
+
+#[inline]
+pub(crate) fn read_fixed_sequence_into<T, const WIDTH: usize>(
+    input: &mut &[u8],
+    count: usize,
+    values: &mut Vec<T>,
+    from_bytes: impl Fn([u8; WIDTH]) -> T,
+) -> Result<()> {
     let len = count.checked_mul(WIDTH).ok_or(Error::InvalidLength)?;
     let data = take(input, len)?;
-    let mut values = Vec::new();
     values
-        .try_reserve_exact(count)
+        .try_reserve_exact(count.saturating_sub(values.len()))
         .map_err(|_| Error::InvalidLength)?;
+    values.clear();
     values.extend(
         data.chunks_exact(WIDTH)
             .map(|chunk| from_bytes(chunk.try_into().expect("exact-width chunk"))),
     );
-    Ok(values)
+    Ok(())
+}
+
+#[inline]
+pub(crate) fn replace_one_string(values: &mut Vec<Vec<u8>>, bytes: &[u8]) {
+    if let Some(first) = values.first_mut() {
+        replace_bytes(first, bytes);
+        values.truncate(1);
+    } else {
+        values.push(bytes.to_vec());
+    }
+}
+
+#[inline]
+pub(crate) fn read_strings_into<'a>(
+    input: &mut &'a [u8],
+    count: usize,
+    values: &mut Vec<Vec<u8>>,
+    read: impl Fn(&mut &'a [u8]) -> Result<&'a [u8]>,
+) -> Result<()> {
+    match count {
+        0 => values.clear(),
+        1 => replace_one_string(values, read(input)?),
+        _ => read_many_strings_into(input, count, values, read)?,
+    }
+    Ok(())
+}
+
+fn read_many_strings_into<'a>(
+    input: &mut &'a [u8],
+    count: usize,
+    values: &mut Vec<Vec<u8>>,
+    read: impl Fn(&mut &'a [u8]) -> Result<&'a [u8]>,
+) -> Result<()> {
+    // Validate the entire vector before reusing any of its buffers.
+    let mut rest = *input;
+    for _ in 0..count {
+        read(&mut rest)?;
+    }
+    values
+        .try_reserve_exact(count.saturating_sub(values.len()))
+        .map_err(|_| Error::InvalidLength)?;
+    values.resize_with(count, Vec::new);
+    let mut validated = *input;
+    for value in values {
+        replace_bytes(value, read(&mut validated).expect("validated string"));
+    }
+    *input = rest;
+    Ok(())
+}
+
+#[inline]
+pub(crate) fn write_one_string_vector(buf: &mut Vec<u8>, text: &[u8]) -> Result<()> {
+    let len = text.len();
+    if len > MAX_SHORT {
+        write_tag(buf, 1);
+        return write_string(buf, text);
+    }
+    let padding = 3 - (len & 3);
+    buf.reserve(5 + len + padding);
+    buf.extend_from_slice(&[1, 0, 0, 0, len as u8]);
+    buf.extend_from_slice(text);
+    buf.extend_from_slice(&[0; 3][..padding]);
+    Ok(())
 }

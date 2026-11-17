@@ -28,6 +28,9 @@ var tl2Runtime string
 //go:embed json.rs
 var jsonRuntime string
 
+//go:embed json_vector.rs
+var jsonVectorRuntime string
+
 type genRust struct {
 	kernel  *pure.Kernel
 	options *puregen.Options
@@ -124,10 +127,11 @@ unused = "allow"
 
 [features]
 default = ["tl-json"]
-tl-json = ["dep:base64", "dep:serde", "dep:serde_json"]
+tl-json = ["dep:base64", "dep:itoa", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 base64 = { version = "0.22", optional = true }
+itoa = { version = "1", optional = true }
 serde = { version = "1", optional = true }
 serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 `, gen.options.Rust.CrateName)
@@ -145,6 +149,8 @@ pub mod types;
 
 #[cfg(feature = "tl-json")]
 mod json;
+#[cfg(feature = "tl-json")]
+mod json_vector;
 #[cfg(feature = "tl-json")]
 pub use json::JsonMode;
 `
@@ -170,6 +176,9 @@ pub use json::JsonMode;
 	}
 
 	if err := outdir.AddCodeFile("src/json.rs", jsonRuntime); err != nil {
+		return err
+	}
+	if err := outdir.AddCodeFile("src/json_vector.rs", jsonVectorRuntime); err != nil {
 		return err
 	}
 

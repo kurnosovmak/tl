@@ -59,9 +59,11 @@ func (wr *TypeRWWrapper) generateTL1Methods(cc *codecreator.RustCodeCreator, pub
 		if withTag && !wr.OriginTL2() {
 			cc.AddLinef("input.read_exact_tag(0x%08x)?;", wr.TLTag())
 		}
-		cc.AddLinef("let mut value = Self::default();")
-		cc.AddLinef("self::read_tl1%s(&mut value, &mut input%s)?;", internalSuffix, natCall)
-		cc.AddLinef("*self = value;")
+		if !reuseVectorTL1(cc, wr) {
+			cc.AddLinef("let mut value = Self::default();")
+			cc.AddLinef("self::read_tl1%s(&mut value, &mut input%s)?;", internalSuffix, natCall)
+			cc.AddLinef("*self = value;")
+		}
 		cc.AddLinef("*buf = input;")
 		cc.AddLinef("Ok(())")
 	}, "}")
@@ -72,6 +74,7 @@ func (wr *TypeRWWrapper) generateTL1Methods(cc *codecreator.RustCodeCreator, pub
 			if withTag && !wr.OriginTL2() {
 				cc.AddLinef("basictl::write_tag(buf, 0x%08x);", wr.TLTag())
 			}
+			writeOneStringVector(cc, wr, true)
 			cc.AddLinef("self::write_tl1%s(self, buf%s)", internalSuffix, natCall)
 		}, "})")
 	}, "}")

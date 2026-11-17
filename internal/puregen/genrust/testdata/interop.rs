@@ -155,3 +155,84 @@ fn tl1_huge_string() {
     assert!(input.is_empty());
     assert_eq!(decoded.Arr, value.Arr);
 }
+
+#[test]
+fn vector_read_reuses_string_buffers() {
+    let source = CasesBytesTestVector {
+        Arr: vec![b"new".to_vec(), b"second".to_vec()],
+    };
+    for (read, write) in [
+        (
+            CasesBytesTestVector::read_tl1 as fn(&mut CasesBytesTestVector, &mut &[u8]) -> _,
+            CasesBytesTestVector::write_tl1 as fn(&CasesBytesTestVector, &mut Vec<u8>) -> _,
+        ),
+        (
+            CasesBytesTestVector::read_tl2,
+            CasesBytesTestVector::write_tl2,
+        ),
+    ] {
+        let mut data = Vec::new();
+        write(&source, &mut data).unwrap();
+        let mut dest = CasesBytesTestVector {
+            Arr: vec![b"old value".to_vec(), b"another value".to_vec()],
+        };
+        let buffers = [dest.Arr[0].as_ptr(), dest.Arr[1].as_ptr()];
+        read(&mut dest, &mut data.as_slice()).unwrap();
+        assert_eq!(dest.Arr, source.Arr);
+        assert_eq!([dest.Arr[0].as_ptr(), dest.Arr[1].as_ptr()], buffers);
+    }
+}
+
+#[test]
+fn json_vector_handles_fast_and_general_forms() {
+    let mut strings = CasesBytesTestVector::default();
+    strings
+        .read_json(br#"{"arr":["plain ASCII"]}"#, JsonMode::Tl1)
+        .unwrap();
+    let buffer = strings.Arr[0].as_ptr();
+    strings
+        .read_json(br#"{"arr":["updated"]}"#, JsonMode::Tl1)
+        .unwrap();
+    assert_eq!(strings.Arr[0], b"updated");
+    assert_eq!(strings.Arr[0].as_ptr(), buffer);
+
+    strings
+        .read_json(
+            br#"{ "arr": ["\n\u00e9","\\" , {"base64":"/w=="}] }"#,
+            JsonMode::Tl1,
+        )
+        .unwrap();
+    assert_eq!(strings.Arr, ["\né".as_bytes(), b"\\", &[255]]);
+    let mut encoded = Vec::new();
+    strings.write_json(&mut encoded, JsonMode::Tl1).unwrap();
+    let mut decoded = CasesBytesTestVector::default();
+    decoded.read_json(&encoded, JsonMode::Tl1).unwrap();
+    assert_eq!(decoded.Arr, strings.Arr);
+
+    for malformed in [
+        b"{\"arr\":[\"12345678\x01\"]}".as_slice(),
+        br#"{"arr":["abc"],"arr":["def"]}"#,
+        br#"{"arr":["abc"]}garbage"#,
+    ] {
+        assert!(strings.read_json(malformed, JsonMode::Tl1).is_err());
+        assert_eq!(strings.Arr, decoded.Arr);
+    }
+
+    let mut integers = CasesTestVector::default();
+    integers
+        .read_json(br#"{"arr":[-2147483648,0,2147483647]}"#, JsonMode::Tl1)
+        .unwrap();
+    assert_eq!(integers.Arr, [i32::MIN, 0, i32::MAX]);
+    for malformed in [
+        br#"{"arr":[9,2147483648]}"#.as_slice(),
+        br#"{"arr":[9,01]}"#,
+        br#"{"arr":[9,]}"#,
+    ] {
+        assert!(integers.read_json(malformed, JsonMode::Tl1).is_err());
+        assert_eq!(integers.Arr, [i32::MIN, 0, i32::MAX]);
+    }
+    integers
+        .read_json(br#"{"arr": [1, "-2", 3]}"#, JsonMode::Tl1)
+        .unwrap();
+    assert_eq!(integers.Arr, [1, -2, 3]);
+}

@@ -120,18 +120,26 @@ func (wr *TypeRWWrapper) generateJSON() string {
 func (wr *TypeRWWrapper) generateJSONMethods(cc *codecreator.RustCodeCreator) {
 	natDecl := wr.formatNatArgsDecl() + wr.fetcherDecl()
 	natCall := wr.formatNatArgsDeclCall() + wr.fetcherCall()
+	vector, vectorFastPath := wr.jsonVector()
 	cc.AddEmptyLine()
 	cc.AddLinef(jsonFeature)
 	cc.AddLinef("impl %s {", wr.goGlobalName)
 	cc.FinishBlock(func() {
 		cc.AddLinef("pub fn read_json(&mut self, input: &[u8], mode: JsonMode%s) -> basictl::Result<()> {", natDecl)
 		cc.FinishBlock(func() {
+			if vectorFastPath {
+				vector.generateRead(cc)
+			}
 			cc.AddLinef("let data = json::parse(input)?;")
 			cc.AddLinef("*self = decode_json(Some(&data), mode%s)?;", natCall)
 			cc.AddLinef("Ok(())")
 		}, "}")
 		cc.AddLinef("pub fn write_json(&self, buf: &mut Vec<u8>, mode: JsonMode%s) -> basictl::Result<()> {", natDecl)
 		cc.FinishBlock(func() {
+			if vectorFastPath {
+				vector.generateWrite(cc)
+				return
+			}
 			cc.AddLinef("let data = encode_json(self, mode%s)?;", natCall)
 			cc.AddLinef("basictl::append(buf, |buf| json::serialize(&data, buf))")
 		}, "}")
