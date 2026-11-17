@@ -8,15 +8,20 @@ import "github.com/VKCOM/tl/internal/tlcodegen/codecreator"
 
 func (trw *TypeRWMaybe) generateTL2(cc *codecreator.RustCodeCreator) {
 	typ := trw.wr.rustType()
-	generateTL2Decoder(cc, typ, func() {
+	trw.wr.generateTL2ReadInto(cc, typ, func() {
 		cc.AddLinef("let (index, mut object) = crate::tl2::read_object(buf)?;")
 		cc.AddLinef("match index {")
 		cc.FinishBlock(func() {
-			cc.AddLinef("0 => Ok(None),")
-			cc.AddLinef("1 if object.mask & 2 != 0 => Ok(Some(%s?)),", trw.element.t.readTL2("&mut object.data"))
-			cc.AddLinef("1 => Ok(Some(%s)),", rustDefault(trw.element.t))
-			cc.AddLinef("index => Err(basictl::Error::UnexpectedConstructor(index)),")
+			cc.AddLinef("0 => *value = None,")
+			cc.AddLinef("1 if object.mask & 2 != 0 => {")
+			cc.FinishBlock(func() {
+				cc.AddLinef("let element = value.get_or_insert_with(|| %s);", rustDefault(trw.element.t))
+				trw.element.t.readTL2Into(cc, "&mut object.data", "element")
+			}, "}")
+			cc.AddLinef("1 => *value = Some(%s),", rustDefault(trw.element.t))
+			cc.AddLinef("index => return Err(basictl::Error::UnexpectedConstructor(index)),")
 		}, "}")
+		cc.AddLinef("Ok(())")
 	})
 	generateTL2Encoder(cc, typ, func() {
 		cc.AddLinef("crate::tl2::write_object(buf, usize::from(value.is_some()), omit_empty, |object| {")

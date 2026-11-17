@@ -94,7 +94,9 @@ func (gen *genRust) generateCode() error {
 		code := typeRw.trw.GenerateCode(false, &DirectImports{})
 		if typeRw.HasTL2() {
 			code += typeRw.generateTL2()
+			code += typeRw.generatePreflight(true)
 		}
+		code += typeRw.generatePreflight(false)
 		code += typeRw.generateJSON()
 		if function, ok := typeRw.trw.(*TypeRWStruct); ok && function.ResultType != nil {
 			code += function.generateRPC()
@@ -127,11 +129,12 @@ unused = "allow"
 
 [features]
 default = ["tl-json"]
-tl-json = ["dep:base64", "dep:itoa", "dep:serde", "dep:serde_json"]
+tl-json = ["dep:base64", "dep:itoa", "dep:memchr", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 base64 = { version = "0.22", optional = true }
 itoa = { version = "1", optional = true }
+memchr = { version = "2", optional = true }
 serde = { version = "1", optional = true }
 serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 `, gen.options.Rust.CrateName)

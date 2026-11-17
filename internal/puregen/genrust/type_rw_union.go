@@ -187,22 +187,27 @@ func (trw *TypeRWUnion) GenerateCode(bytesVersion bool, directImports *DirectImp
 	cc.AddEmptyLine()
 	natArgs := trw.wr.formatNatArgs(nil, trw.ElementNatArgs())
 	trw.wr.generateTL1Functions(cc, "_boxed", name, func() {
-		cc.AddLinef("*value = match buf.read_u32()? {")
+		cc.AddLinef("match buf.read_u32()? {")
 		cc.FinishBlock(func() {
 			for _, field := range trw.Fields {
 				cc.AddLinef("0x%08x => {", field.t.TLTag())
 				cc.FinishBlock(func() {
 					if field.t.IsTrueType() {
-						cc.AddLinef("%s::%s", name, field.goName)
+						cc.AddLinef("*value = %s::%s;", name, field.goName)
 						return
 					}
+					cc.If(fmt.Sprintf("let %s::%s(payload) = value", name, field.goName), func() {
+						target := ifString(field.recursive, "payload.as_mut()", "payload")
+						field.t.TypeReadingCode(cc, bytesVersion, directImports, target, true, natArgs, true)
+						cc.AddLinef("return Ok(());")
+					})
 					cc.AddLinef("let mut payload = %s;", rustDefault(field.t))
 					field.t.TypeReadingCode(cc, bytesVersion, directImports, "payload", true, natArgs, false)
 					payload := "payload"
 					if field.recursive {
 						payload = "Box::new(payload)"
 					}
-					cc.AddLinef("%s::%s(%s)", name, field.goName, payload)
+					cc.AddLinef("*value = %s::%s(%s);", name, field.goName, payload)
 				}, "}")
 			}
 			cc.AddLinef("actual => return Err(basictl::Error::UnexpectedMagic(actual)),")

@@ -15,8 +15,9 @@ func (trw *TypeRWStruct) generateTL2(cc *codecreator.RustCodeCreator) {
 	trw.wr.generateTL2Methods(cc)
 	if trw.isAlias() {
 		field := trw.Fields[0]
-		generateTL2Decoder(cc, name, func() {
-			cc.AddLinef("Ok(%s(%s?))", name, field.t.readTL2("buf"))
+		trw.wr.generateTL2ReadInto(cc, name, func() {
+			field.t.readTL2Into(cc, "buf", "&mut value.0")
+			cc.AddLinef("Ok(())")
 		})
 		generateTL2Encoder(cc, name, func() {
 			cc.AddLinef("%s", field.t.writeTL2("buf", "&value.0", "omit_empty"))
@@ -25,17 +26,16 @@ func (trw *TypeRWStruct) generateTL2(cc *codecreator.RustCodeCreator) {
 	}
 
 	index := trw.pureTypeStruct.UnionIndex()
-	generateTL2Decoder(cc, name, func() {
+	trw.wr.generateTL2ReadInto(cc, name, func() {
 		cc.AddLinef("let (index, object) = crate::tl2::read_object(buf)?;")
 		cc.If(fmt.Sprintf("index != %d", index), func() {
 			cc.AddLinef("return Err(basictl::Error::UnexpectedConstructor(index));")
 		})
-		cc.AddLinef("decode_tl2_fields(object)")
+		cc.AddLinef("decode_tl2_fields(object, value)")
 	})
 	cc.AddEmptyLine()
-	cc.AddLinef("pub(crate) fn decode_tl2_fields(mut object: crate::tl2::ObjectReader<'_>) -> basictl::Result<%s> {", name)
+	cc.AddLinef("pub(crate) fn decode_tl2_fields(mut object: crate::tl2::ObjectReader<'_>, value: &mut %s) -> basictl::Result<()> {", name)
 	cc.FinishBlock(func() {
-		cc.AddLinef("let mut value = %s::default();", name)
 		for i, field := range trw.Fields {
 			if (i+1)%8 == 0 {
 				cc.AddLinef("object.next_block();")
@@ -47,16 +47,19 @@ func (trw *TypeRWStruct) generateTL2(cc *codecreator.RustCodeCreator) {
 				}
 				continue
 			}
-			cc.If(fmt.Sprintf("object.mask & %d != 0", mask), func() {
-				if field.IsTL2Omitted() {
-					cc.AddLinef("%s?;", field.t.skipTL2())
-					return
-				}
-				expr := field.t.readTL2("&mut object.data") + "?"
-				cc.AddLinef("value.%s = %s;", field.goName, field.wrapDecoded(expr))
+			condition := fmt.Sprintf("object.mask & %d != 0", mask)
+			if field.IsTL2Omitted() {
+				cc.If(condition, func() { cc.AddLinef("%s?;", field.t.skipTL2()) })
+				continue
+			}
+			access := "value." + field.goName
+			cc.IfElse(condition, func() {
+				field.t.readTL2Into(cc, "&mut object.data", field.readSlot(access))
+			}, func() {
+				cc.AddLinef("%s = %s;", access, field.readDefault())
 			})
 		}
-		cc.AddLinef("Ok(value)")
+		cc.AddLinef("Ok(())")
 	}, "}")
 
 	generateTL2Encoder(cc, name, func() {

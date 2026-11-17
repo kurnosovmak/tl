@@ -20,6 +20,45 @@ pub enum JsonMode {
     Tl2,
 }
 
+pub(crate) struct Input<T>(pub(crate) T);
+
+pub(crate) struct Bytes(pub(crate) Vec<u8>);
+
+impl<'de> Deserialize<'de> for Bytes {
+    fn deserialize<D: Deserializer<'de>>(decoder: D) -> std::result::Result<Self, D::Error> {
+        struct ByteVisitor;
+        impl<'de> Visitor<'de> for ByteVisitor {
+            type Value = Bytes;
+            fn expecting(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt.write_str("a string or a TL base64 object")
+            }
+            fn visit_str<E: de::Error>(self, text: &str) -> std::result::Result<Bytes, E> {
+                Ok(Bytes(text.as_bytes().to_vec()))
+            }
+            fn visit_string<E: de::Error>(self, text: String) -> std::result::Result<Bytes, E> {
+                Ok(Bytes(text.into_bytes()))
+            }
+            fn visit_map<A: MapAccess<'de>>(
+                self,
+                mut fields: A,
+            ) -> std::result::Result<Bytes, A::Error> {
+                use de::Error as _;
+                if fields.next_key::<&str>()? != Some("base64") {
+                    return Err(A::Error::custom("expected base64"));
+                }
+                let bytes = STANDARD
+                    .decode(fields.next_value::<&str>()?)
+                    .map_err(A::Error::custom)?;
+                if fields.next_key::<&str>()?.is_some() {
+                    return Err(A::Error::custom("unexpected base64 field"));
+                }
+                Ok(Bytes(bytes))
+            }
+        }
+        decoder.deserialize_any(ByteVisitor)
+    }
+}
+
 struct UniqueValue(Value);
 
 impl<'de> Deserialize<'de> for UniqueValue {

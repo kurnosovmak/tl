@@ -108,6 +108,27 @@ func run(source, dest message, dir, mode string) {
 		}
 		wire, err = os.ReadFile(path("go"))
 		check(err)
+		if mode == "rotate" {
+			var frames [3][]byte
+			for i, name := range []string{"batch-3", "batch-24", "batch-192"} {
+				caseDir := filepath.Join(filepath.Dir(dir), name)
+				frames[i], err = os.ReadFile(filepath.Join(caseDir, "go."+codec.name))
+				check(err)
+				codec.read(frames[i])
+				actual, err := dest.WriteTL1General(nil)
+				check(err)
+				expected, err := os.ReadFile(filepath.Join(caseDir, "go.TL1"))
+				check(err)
+				if !bytes.Equal(actual, expected) {
+					panic("rotating decode changed TL1 value")
+				}
+			}
+			i := 0
+			ns := measure(func() { codec.read(frames[i]); i = (i + 1) % len(frames) })
+			runtime.KeepAlive(dest)
+			fmt.Printf("%s,%.3f,,\n", codec.name, ns)
+			continue
+		}
 		buf := make([]byte, 0, len(wire))
 		write := measure(func() { buf = codec.write(buf[:0]) })
 		read := measure(func() { codec.read(wire) })

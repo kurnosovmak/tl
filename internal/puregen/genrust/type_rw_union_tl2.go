@@ -4,25 +4,33 @@
 
 package genrust
 
-import "github.com/VKCOM/tl/internal/tlcodegen/codecreator"
+import (
+	"fmt"
+	"github.com/VKCOM/tl/internal/tlcodegen/codecreator"
+)
 
 func (trw *TypeRWUnion) generateTL2(cc *codecreator.RustCodeCreator) {
 	name := trw.wr.goGlobalName
 	trw.wr.generateTL2Methods(cc)
-	generateTL2Decoder(cc, name, func() {
+	trw.wr.generateTL2ReadInto(cc, name, func() {
 		cc.AddLinef("let (index, object) = crate::tl2::read_object(buf)?;")
 		cc.AddLinef("match index {")
 		cc.FinishBlock(func() {
 			for index, field := range trw.Fields {
-				if field.t.IsTrueType() {
-					cc.AddLinef("%d => Ok(%s::%s),", index, name, field.goName)
-					continue
-				}
-				payload := field.t.rustModule() + "::decode_tl2_fields(object)?"
-				if field.recursive {
-					payload = "Box::new(" + payload + ")"
-				}
-				cc.AddLinef("%d => Ok(%s::%s(%s)),", index, name, field.goName, payload)
+				variant := name + "::" + field.goName
+				cc.AddLinef("%d => {", index)
+				cc.FinishBlock(func() {
+					if field.t.IsTrueType() {
+						cc.AddLinef("*value = %s;", variant)
+					} else {
+						cc.If(fmt.Sprintf("!matches!(value, %s(_))", variant), func() {
+							cc.AddLinef("*value = %s(Default::default());", variant)
+						})
+						cc.AddLinef("let %s(payload) = value else { unreachable!() };", variant)
+						cc.AddLinef("%s::decode_tl2_fields(object, payload)?;", field.t.rustModule())
+					}
+					cc.AddLinef("Ok(())")
+				}, "}")
 			}
 			cc.AddLinef("index => Err(basictl::Error::UnexpectedConstructor(index)),")
 		}, "}")

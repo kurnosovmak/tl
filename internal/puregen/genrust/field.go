@@ -89,3 +89,24 @@ func (field Field) wrapDecoded(expr string) string {
 	}
 	return expr
 }
+
+func (field Field) readDefault() string {
+	if field.hasPresence() {
+		return "None"
+	}
+	if field.IsBit() {
+		return "false"
+	}
+	return rustDefault(field.t)
+}
+
+func (field Field) readSlot(access string) string {
+	if !field.hasPresence() {
+		return "&mut " + access
+	}
+	initial := rustDefault(field.t)
+	if field.recursive {
+		return access + ".get_or_insert_with(|| Box::new(" + initial + ")).as_mut()"
+	}
+	return access + ".get_or_insert_with(|| " + initial + ")"
+}

@@ -65,17 +65,36 @@ Generated types live in `gentl::types`. Unions and enumerations use Rust
   `Response` encode and dispatch RPC payloads, including legacy TL1
   `!X` wrappers. The application provides the network transport.
 
+For streams of binary messages, keep a second value of the same type as scratch
+storage. `value.read_tl1_with_scratch(&mut input, &mut scratch)?` and
+`read_tl2_with_scratch` decode into that storage, then swap the values.
+`read_tl1_boxed_with_scratch` also consumes the constructor tag. On error the
+receiver and input cursor retain their original values. Scratch can contain a
+partial message and can be used for the next read. This mode keeps up to two
+decoded messages in memory. The ordinary readers also reuse compatible buffers
+after validating the input.
+
+When the caller can discard a partially decoded message after an error,
+use `read_tl1_in_place`, `read_tl1_boxed_in_place` or `read_tl2_in_place`.
+These methods decode in a single pass into one reusable value. On error the
+input cursor stays at the start of the message, and the next read can reuse
+the same value.
+
 The Rust backend is experimental. Run `make testrust` to compile the generated
 libraries and check binary and TL-JSON compatibility against the Go backend.
 
 Run `python3 internal/puregen/genrust/testdata/bench/run.py` to benchmark both
 backends on strings, numeric vectors, field masks and nested unions. Each reader
 decodes the other writer's output before timing. Both readers then time the same
-Go input with reusable destinations. Each writer reuses its output buffer.
+Go input with reusable destinations. The `rust_scratch_decode_ns` and
+`rust_in_place_decode_ns` columns time the two explicit binary reuse modes.
+Each writer reuses its output buffer.
 The runner alternates languages between rounds and saves per-round medians
 (seven samples each) and their means in `target/rust-bench/{samples,summary}.csv`.
 Use `--verify-only` for the compatibility checks, `--rounds N` to repeat, or
 `--baseline-generator /path/to/tl2gen` to include an earlier Rust backend.
+Add `--rotating` to cycle through batches of 3, 24 and 192 events using
+the same destination. Per-round read times are saved in `rotating.csv`.
 
 ## Documentation
 

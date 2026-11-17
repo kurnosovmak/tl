@@ -114,6 +114,7 @@ func (wr *TypeRWWrapper) generateJSON() string {
 	case *TypeRWMaybe:
 		typ.generateJSON(cc)
 	}
+	wr.generateDirectJSON(cc)
 	return cc.Text()
 }
 
@@ -129,6 +130,14 @@ func (wr *TypeRWWrapper) generateJSONMethods(cc *codecreator.RustCodeCreator) {
 		cc.FinishBlock(func() {
 			if vectorFastPath {
 				vector.generateRead(cc)
+			}
+			if wr.directJSONRoot() {
+				cc.If("mode == JsonMode::Tl1", func() {
+					cc.If("let Ok(json::Input(value)) = serde_json::from_slice(input)", func() {
+						cc.AddLinef("*self = value;")
+						cc.AddLinef("return Ok(());")
+					})
+				})
 			}
 			cc.AddLinef("let data = json::parse(input)?;")
 			cc.AddLinef("*self = decode_json(Some(&data), mode%s)?;", natCall)

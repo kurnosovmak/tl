@@ -137,10 +137,41 @@ pub(crate) fn read_string(input: &[u8], prefix: &[u8], values: &mut Vec<Vec<u8>>
     else {
         return false;
     };
+    if plain_ascii(text) {
+        basictl::replace_one_string(values, text);
+        return true;
+    }
+    match memchr::memchr(b'"', text) {
+        Some(quote) => read_plain_strings(text, quote, values),
+        None => false,
+    }
+}
+
+fn read_plain_strings(mut text: &[u8], mut quote: usize, values: &mut Vec<Vec<u8>>) -> bool {
+    let mut parts = Vec::new();
+    loop {
+        let (part, tail) = text.split_at(quote);
+        let Some(rest) = tail.strip_prefix(br#"",""#) else {
+            return false;
+        };
+        if !plain_ascii(part) {
+            return false;
+        }
+        parts.push(part);
+        text = rest;
+        match memchr::memchr(b'"', text) {
+            Some(next) => quote = next,
+            None => break,
+        }
+    }
     if !plain_ascii(text) {
         return false;
     }
-    basictl::replace_one_string(values, text);
+    parts.push(text);
+    values.resize_with(parts.len(), Vec::new);
+    for (value, part) in values.iter_mut().zip(parts) {
+        basictl::replace_bytes(value, part);
+    }
     true
 }
 

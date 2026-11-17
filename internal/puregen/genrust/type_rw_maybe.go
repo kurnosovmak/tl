@@ -94,9 +94,8 @@ func (trw *TypeRWMaybe) GenerateCode(bytesVersion bool, directImports *DirectImp
 	typeString := trw.wr.TypeString2(bytesVersion, directImports, false, false)
 	trw.wr.generateTL1Functions(cc, "_boxed", typeString, func() {
 		cc.IfElse(fmt.Sprintf("buf.read_bool(0x%08x, 0x%08x)?", trw.emptyTag, trw.okTag), func() {
-			cc.AddLinef("let mut element = %s;", rustDefault(trw.element.t))
-			trw.element.t.TypeReadingCode(cc, bytesVersion, directImports, "element", trw.element.Bare(), natArgs, false)
-			cc.AddLinef("*value = Some(element);")
+			cc.AddLinef("let element = value.get_or_insert_with(|| %s);", rustDefault(trw.element.t))
+			trw.element.t.TypeReadingCode(cc, bytesVersion, directImports, "element", trw.element.Bare(), natArgs, true)
 		}, func() {
 			cc.AddLinef("*value = None;")
 		})

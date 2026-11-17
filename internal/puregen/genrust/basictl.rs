@@ -236,14 +236,25 @@ pub(crate) fn write_fixed_sequence<T: Copy, const WIDTH: usize>(
     Ok(())
 }
 
-pub(crate) fn read_fixed_sequence<T, const WIDTH: usize>(
-    input: &mut &[u8],
+#[inline]
+pub(crate) fn read_vector_into<T>(
+    values: &mut Vec<T>,
     count: usize,
-    from_bytes: impl Fn([u8; WIDTH]) -> T,
-) -> Result<Vec<T>> {
-    let mut values = Vec::new();
-    read_fixed_sequence_into(input, count, &mut values, from_bytes)?;
-    Ok(values)
+    new: impl Fn() -> T,
+    mut read: impl FnMut(&mut T) -> Result<()>,
+) -> Result<()> {
+    values.truncate(count);
+    for item in values.iter_mut() {
+        read(item)?;
+    }
+    // TL1 counts can precede a truncated payload. Grow only as elements are read.
+    for _ in values.len()..count {
+        let mut item = new();
+        read(&mut item)?;
+        values.try_reserve(1).map_err(|_| Error::InvalidLength)?;
+        values.push(item);
+    }
+    Ok(())
 }
 
 #[inline]

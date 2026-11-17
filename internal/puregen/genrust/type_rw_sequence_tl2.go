@@ -89,37 +89,39 @@ func (wr *TypeRWWrapper) generateTL2Sequence(cc *codecreator.RustCodeCreator, el
 			cc.AddLinef("crate::tl2::sequence_size(value.len(), payload_size_tl2(value), omit_empty)")
 		}, "}")
 	}
-	generateTL2Decoder(cc, typ, func() {
+	wr.generateTL2ReadInto(cc, typ, func() {
 		cc.AddLinef("let mut data = crate::tl2::read_sized(buf)?;")
-		cc.AddLinef("let mut value: %s = %s;", typ, rustDefault(wr))
-		cc.If("data.is_empty()", func() { cc.AddLinef("return Ok(value);") })
-		cc.AddLinef("let count = crate::tl2::read_size(&mut data)?;")
+		cc.AddLinef("let count = if data.is_empty() { 0 } else { crate::tl2::read_size(&mut data)? };")
 		if primitive := element.fixedSequencePrimitive(); primitive != "" && !fixed {
-			cc.AddLinef("basictl::read_fixed_sequence(&mut data, count, %s::from_le_bytes)", primitive)
+			cc.AddLinef("basictl::read_fixed_sequence_into(&mut data, count, value, %s::from_le_bytes)", primitive)
 			return
 		}
 		if fixed {
 			cc.AddLinef("let count = count.min(value.len());")
+			cc.AddLinef("for slot in &mut value[count..] { *slot = %s; }", rustDefault(element))
 		} else {
 			needed := ifString(packed, "count.div_ceil(8)", "count")
 			cc.If(needed+" > data.len()", func() { cc.AddLinef("return Err(basictl::Error::InvalidLength);") })
-			cc.AddLinef("value.try_reserve_exact(count).map_err(|_| basictl::Error::InvalidLength)?;")
+			cc.AddLinef("value.try_reserve_exact(count.saturating_sub(value.len())).map_err(|_| basictl::Error::InvalidLength)?;")
+			if !packed {
+				cc.AddLinef("basictl::read_vector_into(value, count, || %s, |slot| {", rustDefault(element))
+				cc.FinishBlock(func() {
+					element.readTL2Into(cc, "&mut data", "slot")
+					cc.AddLinef("Ok(())")
+				}, "})")
+				return
+			}
+			cc.AddLinef("value.resize(count, false);")
 		}
 		if packed {
-			cc.AddLinef("let data = basictl::take(&mut data, count.div_ceil(8))?;")
+			cc.AddLinef("let bits = basictl::take(&mut data, count.div_ceil(8))?;")
+			cc.For("(i, slot)", "value[..count].iter_mut().enumerate()", "", func() {
+				cc.AddLinef("*slot = bits[i / 8] & (1 << (i %% 8)) != 0;")
+			})
+		} else {
+			cc.For("slot", "&mut value[..count]", "", func() { element.readTL2Into(cc, "&mut data", "slot") })
 		}
-		cc.For("i", "0..count", "", func() {
-			expr := element.readTL2("&mut data") + "?"
-			if packed {
-				expr = "data[i / 8] & (1 << (i % 8)) != 0"
-			}
-			if fixed {
-				cc.AddLinef("value[i] = %s;", expr)
-			} else {
-				cc.AddLinef("value.push(%s);", expr)
-			}
-		})
-		cc.AddLinef("Ok(value)")
+		cc.AddLinef("Ok(())")
 	})
 	generateTL2Encoder(cc, typ, func() {
 		sizeArg := ifString(size != "", "Some(payload_size_tl2(value))", "None")

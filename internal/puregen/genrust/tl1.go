@@ -60,11 +60,37 @@ func (wr *TypeRWWrapper) generateTL1Methods(cc *codecreator.RustCodeCreator, pub
 			cc.AddLinef("input.read_exact_tag(0x%08x)?;", wr.TLTag())
 		}
 		if !reuseVectorTL1(cc, wr) {
+			if wr.preflightRoot() {
+				cc.AddLinef("let mut probe = input;")
+				cc.If("preflight_tl1(&mut probe, self).is_some()", func() {
+					cc.AddLinef("self::read_tl1%s(self, &mut input%s)?;", internalSuffix, natCall)
+					cc.AddLinef("*buf = input;")
+					cc.AddLinef("return Ok(());")
+				})
+			}
 			cc.AddLinef("let mut value = Self::default();")
 			cc.AddLinef("self::read_tl1%s(&mut value, &mut input%s)?;", internalSuffix, natCall)
 			cc.AddLinef("*self = value;")
 		}
 		cc.AddLinef("*buf = input;")
+		cc.AddLinef("Ok(())")
+	}, "}")
+	cc.AddLinef("/// Reuse this value directly. On error the cursor is unchanged and the value may be partially updated.")
+	cc.AddLinef("pub fn read_tl1%s_in_place(&mut self, buf: &mut &[u8]%s) -> basictl::Result<()> {", publicSuffix, natDecl)
+	cc.FinishBlock(func() {
+		cc.AddLinef("let mut input = *buf;")
+		if withTag && !wr.OriginTL2() {
+			cc.AddLinef("input.read_exact_tag(0x%08x)?;", wr.TLTag())
+		}
+		cc.AddLinef("self::read_tl1%s(self, &mut input%s)?;", internalSuffix, natCall)
+		cc.AddLinef("*buf = input;")
+		cc.AddLinef("Ok(())")
+	}, "}")
+	cc.AddLinef("/// Reuse scratch storage and replace this value only after a successful read.")
+	cc.AddLinef("pub fn read_tl1%s_with_scratch(&mut self, buf: &mut &[u8], scratch: &mut Self%s) -> basictl::Result<()> {", publicSuffix, natDecl)
+	cc.FinishBlock(func() {
+		cc.AddLinef("scratch.read_tl1%s_in_place(buf%s)?;", publicSuffix, natCall)
+		cc.AddLinef("std::mem::swap(self, scratch);")
 		cc.AddLinef("Ok(())")
 	}, "}")
 	cc.AddLinef("pub fn write_tl1%s(&self, buf: &mut Vec<u8>%s) -> basictl::Result<()> {", publicSuffix, natDecl)
@@ -133,15 +159,13 @@ func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, leng
 				element.t.TypeReadingCode(cc, bytesVersion, imports, "element", element.Bare(), natArgs, true)
 			})
 		} else if primitive := element.t.fixedSequencePrimitive(); primitive != "" && element.Bare() {
-			cc.AddLinef("*value = basictl::read_fixed_sequence(buf, %s as usize, %s::from_le_bytes)?;", count, primitive)
+			cc.AddLinef("basictl::read_fixed_sequence_into(buf, %s as usize, value, %s::from_le_bytes)?;", count, primitive)
 		} else {
-			cc.AddLinef("value.clear();")
-			cc.For("_", "0.."+count, "", func() {
-				cc.AddLinef("let mut element = %s;", rustDefault(element.t))
-				element.t.TypeReadingCode(cc, bytesVersion, imports, "element", element.Bare(), natArgs, false)
-				cc.AddLinef("value.try_reserve(1).map_err(|_| basictl::Error::InvalidLength)?;")
-				cc.AddLinef("value.push(element);")
-			})
+			cc.AddLinef("basictl::read_vector_into(value, %s as usize, || %s, |element| {", count, rustDefault(element.t))
+			cc.FinishBlock(func() {
+				element.t.TypeReadingCode(cc, bytesVersion, imports, "element", element.Bare(), natArgs, true)
+				cc.AddLinef("Ok(())")
+			}, "})?;")
 		}
 		cc.AddLinef("Ok(())")
 	}, func() {

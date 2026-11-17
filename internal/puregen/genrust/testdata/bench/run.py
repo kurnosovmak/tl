@@ -25,8 +25,11 @@ def build_rust(generator, name):
     examples = crate / "examples"
     examples.mkdir(exist_ok=True)
     shutil.copyfile(HERE / "compare.rs", examples / "compare.rs")
+    manifest = crate / "Cargo.toml"
+    manifest.write_text(manifest.read_text().replace("[features]", "[features]\nbench-reuse = []", 1))
+    features = ["--features", "bench-reuse"] if name == "rust" else []
     target = OUT / (name + "-target")
-    subprocess.run(["cargo", "build", "--release", "--example", "compare",
+    subprocess.run(["cargo", "build", "--release", "--example", "compare", *features,
                     "--target-dir", target], cwd=crate, check=True)
     return target / "release/examples/compare"
 
@@ -106,6 +109,7 @@ def main():
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--baseline-generator", type=Path,
                         help="also time Rust code from this earlier tl2gen executable")
+    parser.add_argument("--rotating", action="store_true", help="also cycle through three batch sizes while reading")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("--rounds must be positive")
@@ -115,32 +119,48 @@ def main():
     if args.verify_only:
         return
     samples = {}
+    reuse_samples = {}
     with (OUT / "samples.csv").open("w", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["round", "case", "language", "codec", "bytes", "encode_ns", "decode_ns"])
+        writer.writerow(["round", "case", "language", "codec", "bytes", "encode_ns", "decode_ns", "scratch_decode_ns", "in_place_decode_ns"])
         for index in range(args.rounds):
             for name, kind, directory in jobs:
                 for lang in (list(binaries) if index % 2 == 0 else reversed(binaries)):
                     result = invoke(binaries[lang], kind, directory, "bench")
-                    for codec, size, enc, dec in csv.reader(result.splitlines()):
-                        writer.writerow([index + 1, name, lang, codec, size, enc, dec])
+                    for codec, size, enc, dec, *extra in csv.reader(result.splitlines()):
+                        scratch, in_place = extra or ("", "")
+                        if scratch:
+                            reuse_samples.setdefault((name, codec), []).append((float(scratch), float(in_place)))
+                        writer.writerow([index + 1, name, lang, codec, size, enc, dec, scratch, in_place])
                         file.flush()
                         samples.setdefault((name, codec, lang), []).append((int(size), float(enc), float(dec)))
     previous = "previous" in binaries
     with (OUT / "summary.csv").open("w", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(["case", "codec", "go_bytes", "rust_bytes", "go_encode_ns", "rust_encode_ns",
-                         "go_decode_ns", "rust_decode_ns"] + (["previous_rust_encode_ns", "previous_rust_decode_ns"] if previous else []))
+                         "go_decode_ns", "rust_decode_ns", "rust_scratch_decode_ns", "rust_in_place_decode_ns"] + (["previous_rust_encode_ns", "previous_rust_decode_ns"] if previous else []))
         for name, _, _ in jobs:
             for codec in ("TL1", "TL2", "JSON"):
                 go, rust = [[statistics.mean(col) for col in zip(*samples[name, codec, lang])]
                             for lang in ("go", "rust")]
                 row = [name, codec, int(go[0]), int(rust[0]), go[1], rust[1], go[2], rust[2]]
+                metrics = reuse_samples.get((name, codec))
+                row.extend(map(statistics.mean, zip(*metrics)) if metrics else ("", ""))
                 if previous:
                     _, enc, dec = zip(*samples[name, codec, "previous"])
                     row.extend((statistics.mean(enc), statistics.mean(dec)))
                 writer.writerow(row)
     print(OUT / "summary.csv")
+    if args.rotating:
+        with (OUT / "rotating.csv").open("w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["round", "language", "codec", "decode_ns", "scratch_decode_ns", "in_place_decode_ns"])
+            for index in range(args.rounds):
+                for lang in (list(binaries) if index % 2 == 0 else reversed(binaries)):
+                    result = invoke(binaries[lang], "batch", OUT / "cases/batch-192", "rotate")
+                    for row in csv.reader(result.splitlines()):
+                        writer.writerow([index + 1, lang, *row])
+        print(OUT / "rotating.csv")
 
 
 if __name__ == "__main__":

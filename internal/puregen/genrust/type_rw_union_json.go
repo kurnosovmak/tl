@@ -23,19 +23,12 @@ func (trw *TypeRWUnion) generateJSON(cc *codecreator.RustCodeCreator) {
 		cc.FinishBlock(func() {
 			for _, variant := range trw.Fields {
 				tlName := variant.t.TLName().String()
-				tags := []string{}
-				if wr.HasTL2() || strings.Contains(tlName, "__") {
-					tags = append(tags, strconv.Quote(variant.variantName))
-				}
-				if !strings.Contains(tlName, "__") && !slices.Contains(tags, strconv.Quote(tlName)) {
-					tags = append(tags, strconv.Quote(tlName))
-				}
 				if !wr.OriginTL2() {
 					legacy := fmt.Sprintf("#%08x", variant.t.TLTag())
 					cc.AddLinef("%q | %q if mode == JsonMode::Legacy => {", tlName+legacy, legacy)
 					cc.FinishBlock(func() { trw.decodeJSONVariant(cc, variant, args) }, "}")
 				}
-				cc.AddLinef("%s => {", strings.Join(tags, " | "))
+				cc.AddLinef("%s => {", trw.jsonReadTags(variant))
 				cc.FinishBlock(func() { trw.decodeJSONVariant(cc, variant, args) }, "}")
 			}
 			cc.AddLinef("_ => Err(json::error(format!(\"unknown union variant {tag:?}\"))),")
@@ -65,6 +58,18 @@ func (trw *TypeRWUnion) generateJSON(cc *codecreator.RustCodeCreator) {
 			}
 		}, "}")
 	})
+}
+
+func (trw *TypeRWUnion) jsonReadTags(variant Variant) string {
+	tlName := variant.t.TLName().String()
+	var tags []string
+	if trw.wr.HasTL2() || strings.Contains(tlName, "__") {
+		tags = append(tags, strconv.Quote(variant.variantName))
+	}
+	if !strings.Contains(tlName, "__") && !slices.Contains(tags, strconv.Quote(tlName)) {
+		tags = append(tags, strconv.Quote(tlName))
+	}
+	return strings.Join(tags, " | ")
 }
 
 func (trw *TypeRWUnion) decodeJSONVariant(cc *codecreator.RustCodeCreator, variant Variant, args []string) {

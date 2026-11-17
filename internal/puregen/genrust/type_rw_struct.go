@@ -351,9 +351,8 @@ func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field
 		} else if write {
 			cc.AddLines(strings.Split(field.t.TypeWritingCode(fieldAccess, field.Bare(), natArgs, false), "\n")...)
 		} else if field.hasPresence() {
-			cc.AddLinef("let mut field = %s;", rustDefault(field.t))
-			field.t.TypeReadingCode(cc, bytesVersion, directImports, "field", field.Bare(), natArgs, false)
-			cc.AddLinef("%s = %s;", fieldAccess, field.wrapDecoded("field"))
+			cc.AddLinef("let field = %s;", field.readSlot(fieldAccess))
+			field.t.TypeReadingCode(cc, bytesVersion, directImports, "field", field.Bare(), natArgs, true)
 		} else {
 			field.t.TypeReadingCode(cc, bytesVersion, directImports, fieldAccess, field.Bare(), natArgs, false)
 		}
@@ -363,5 +362,10 @@ func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field
 		return
 	}
 	mask := trw.wr.formatNatArg(trw.Fields, *field.FieldMask())
-	cc.If(fmt.Sprintf("%s & (1 << %d) != 0", mask, field.BitNumber()), body)
+	condition := fmt.Sprintf("%s & (1 << %d) != 0", mask, field.BitNumber())
+	if write {
+		cc.If(condition, body)
+	} else {
+		cc.IfElse(condition, body, func() { cc.AddLinef("value.%s = %s;", field.goName, field.readDefault()) })
+	}
 }
