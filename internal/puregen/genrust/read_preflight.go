@@ -74,7 +74,8 @@ func (wr *TypeRWWrapper) generatePreflight(tl2 bool) string {
 				cc.If("count > value.capacity()", func() { cc.AddLinef("return None;") })
 				cc.AddLinef("basictl::take(buf, count.checked_mul(%d)?).ok()?;", width)
 			} else {
-				cc.For("slot", "value.get(..count)?", "", func() { typ.element.t.preflightField(cc, "buf", "slot", typ.element.Bare(), tl2) })
+				slots := ifString(wr.retainedVector(), "value.slots()", "value")
+				cc.For("slot", slots+".get(..count)?", "", func() { typ.element.t.preflightField(cc, "buf", "slot", typ.element.Bare(), tl2) })
 			}
 		case *TypeRWStruct:
 			if tl2 {

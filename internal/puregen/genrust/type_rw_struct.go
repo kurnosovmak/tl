@@ -366,6 +366,6 @@ func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field
 	if write {
 		cc.If(condition, body)
 	} else {
-		cc.IfElse(condition, body, func() { cc.AddLinef("value.%s = %s;", field.goName, field.readDefault()) })
+		cc.IfElse(condition, body, func() { cc.AddLinef("%s", field.resetAfterRead("value."+field.goName)) })
 	}
 }

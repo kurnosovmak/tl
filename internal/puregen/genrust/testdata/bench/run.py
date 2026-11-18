@@ -18,23 +18,25 @@ OUT = ROOT / "target/rust-bench"
 GO_PKG = "github.com/VKCOM/tl/target/rust-bench/go_codec"
 
 
-def build_rust(generator, name):
+def build_rust(generator, name, retain=False):
     crate = OUT / name
     subprocess.run([generator, "--language=rust", "--tl2WhiteList=*", "--outdir=" + str(crate),
-                    HERE / "schema.tl"], cwd=ROOT, check=True)
+                    *(["--retain-vector-buffers"] if retain else []), HERE / "schema.tl"], cwd=ROOT, check=True)
     examples = crate / "examples"
     examples.mkdir(exist_ok=True)
     shutil.copyfile(HERE / "compare.rs", examples / "compare.rs")
     manifest = crate / "Cargo.toml"
     manifest.write_text(manifest.read_text().replace("[features]", "[features]\nbench-reuse = []", 1))
-    features = ["--features", "bench-reuse"] if name == "rust" else []
+    has_reuse = any("pub fn read_tl2_in_place(" in module.read_text()
+                    for module in (crate / "src/types").glob("*.rs"))
+    features = ["--features", "bench-reuse"] if has_reuse else []
     target = OUT / (name + "-target")
     subprocess.run(["cargo", "build", "--release", "--example", "compare", *features,
                     "--target-dir", target], cwd=crate, check=True)
     return target / "release/examples/compare"
 
 
-def build(baseline):
+def build(baseline, retain=False):
     OUT.mkdir(parents=True, exist_ok=True)
     generator = OUT / "tl2gen"
     subprocess.run(["go", "build", "-o", generator, "./cmd/tl2gen"], cwd=ROOT, check=True)
@@ -42,7 +44,7 @@ def build(baseline):
                     "--basicPkgPath=", "--pkgPath=" + GO_PKG + "/tl", "--outdir=" + str(OUT / "go_codec"),
                     HERE / "schema.tl"], cwd=ROOT, check=True)
     subprocess.run(["go", "build", "-o", OUT / "go-bench", HERE / "main.go"], cwd=ROOT, check=True)
-    binaries = {"go": OUT / "go-bench", "rust": build_rust(generator, "rust")}
+    binaries = {"go": OUT / "go-bench", "rust": build_rust(generator, "rust", retain)}
     if baseline:
         binaries["previous"] = build_rust(baseline.resolve(), "previous")
     return binaries
@@ -110,10 +112,14 @@ def main():
     parser.add_argument("--baseline-generator", type=Path,
                         help="also time Rust code from this earlier tl2gen executable")
     parser.add_argument("--rotating", action="store_true", help="also cycle through three batch sizes while reading")
+    parser.add_argument("--retain-vector-buffers", action="store_true", help="retain nested Rust vector slots across reads")
+    parser.add_argument("--rotating-rounds", type=int, help="run this many rotating rounds independently of --rounds")
     args = parser.parse_args()
     if args.rounds < 1:
         parser.error("--rounds must be positive")
-    binaries = build(args.baseline_generator)
+    if args.rotating_rounds is not None and args.rotating_rounds < 1:
+        parser.error("--rotating-rounds must be positive")
+    binaries = build(args.baseline_generator, args.retain_vector_buffers)
     jobs = [(name, kind, verify(binaries, name, kind, data)) for name, kind, data in cases()]
     print(f"Verified {len(jobs) * 3} codec cases in both directions.", file=sys.stderr)
     if args.verify_only:
@@ -129,7 +135,7 @@ def main():
                     result = invoke(binaries[lang], kind, directory, "bench")
                     for codec, size, enc, dec, *extra in csv.reader(result.splitlines()):
                         scratch, in_place = extra or ("", "")
-                        if scratch:
+                        if scratch and lang == "rust":
                             reuse_samples.setdefault((name, codec), []).append((float(scratch), float(in_place)))
                         writer.writerow([index + 1, name, lang, codec, size, enc, dec, scratch, in_place])
                         file.flush()
@@ -151,11 +157,11 @@ def main():
                     row.extend((statistics.mean(enc), statistics.mean(dec)))
                 writer.writerow(row)
     print(OUT / "summary.csv")
-    if args.rotating:
+    if args.rotating or args.rotating_rounds:
         with (OUT / "rotating.csv").open("w", newline="") as file:
             writer = csv.writer(file)
             writer.writerow(["round", "language", "codec", "decode_ns", "scratch_decode_ns", "in_place_decode_ns"])
-            for index in range(args.rounds):
+            for index in range(args.rotating_rounds or args.rounds):
                 for lang in (list(binaries) if index % 2 == 0 else reversed(binaries)):
                     result = invoke(binaries[lang], "batch", OUT / "cases/batch-192", "rotate")
                     for row in csv.reader(result.splitlines()):

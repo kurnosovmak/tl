@@ -90,6 +90,13 @@ func (field Field) wrapDecoded(expr string) string {
 	return expr
 }
 
+func (field Field) resetAfterRead(access string) string {
+	if !field.hasPresence() && field.t.retainedVector() {
+		return access + ".clear();"
+	}
+	return access + " = " + field.readDefault() + ";"
+}
+
 func (field Field) readDefault() string {
 	if field.hasPresence() {
 		return "None"

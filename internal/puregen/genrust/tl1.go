@@ -59,7 +59,7 @@ func (wr *TypeRWWrapper) generateTL1Methods(cc *codecreator.RustCodeCreator, pub
 		if withTag && !wr.OriginTL2() {
 			cc.AddLinef("input.read_exact_tag(0x%08x)?;", wr.TLTag())
 		}
-		if !reuseVectorTL1(cc, wr) {
+		if !reuseVectorTL1(cc, wr) && !wr.stageRetainedRead(cc, "self::read_tl1"+internalSuffix+"(&mut pending, &mut input"+natCall+")") {
 			if wr.preflightRoot() {
 				cc.AddLinef("let mut probe = input;")
 				cc.If("preflight_tl1(&mut probe, self).is_some()", func() {
@@ -161,7 +161,8 @@ func generateSequence(wrapper *TypeRWWrapper, element Field, prefixed bool, leng
 		} else if primitive := element.t.fixedSequencePrimitive(); primitive != "" && element.Bare() {
 			cc.AddLinef("basictl::read_fixed_sequence_into(buf, %s as usize, value, %s::from_le_bytes)?;", count, primitive)
 		} else {
-			cc.AddLinef("basictl::read_vector_into(value, %s as usize, || %s, |element| {", count, rustDefault(element.t))
+			reader := ifString(wrapper.retainedVector(), "value.read_into(", "basictl::read_vector_into(value, ")
+			cc.AddLinef("%s%s as usize, || %s, |element| {", reader, count, rustDefault(element.t))
 			cc.FinishBlock(func() {
 				element.t.TypeReadingCode(cc, bytesVersion, imports, "element", element.Bare(), natArgs, true)
 				cc.AddLinef("Ok(())")

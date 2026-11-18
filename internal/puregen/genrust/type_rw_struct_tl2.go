@@ -56,7 +56,7 @@ func (trw *TypeRWStruct) generateTL2(cc *codecreator.RustCodeCreator) {
 			cc.IfElse(condition, func() {
 				field.t.readTL2Into(cc, "&mut object.data", field.readSlot(access))
 			}, func() {
-				cc.AddLinef("%s = %s;", access, field.readDefault())
+				cc.AddLinef("%s", field.resetAfterRead(access))
 			})
 		}
 		cc.AddLinef("Ok(())")

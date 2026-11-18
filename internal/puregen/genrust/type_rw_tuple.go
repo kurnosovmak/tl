@@ -24,9 +24,35 @@ type TypeRWBrackets struct {
 
 var _ TypeRW = &TypeRWBrackets{}
 
+// Only compound elements need this representation. Primitive vectors already reuse
+// their contiguous allocation and keep their existing Rust type.
+func (wr *TypeRWWrapper) retainedVector() bool {
+	if !wr.gen.options.Rust.RetainVectorBuffers {
+		return false
+	}
+	switch t := wr.trw.(type) {
+	case *TypeRWStruct:
+		return t.isUnwrapType() && t.Fields[0].t.retainedVector()
+	case *TypeRWBrackets:
+		if !t.vectorLike && !t.dynamicSize {
+			return false
+		}
+		switch t.element.t.trw.(type) {
+		case *TypeRWPrimitive, *TypeRWBool:
+			return false
+		}
+		return true
+	}
+	return false
+}
+
 func (trw *TypeRWBrackets) typeString2(bytesVersion bool, directImports *DirectImports, isLocal bool, skipAlias bool) string {
 	if trw.vectorLike || trw.dynamicSize {
-		return fmt.Sprintf("Vec<%s>", trw.element.t.TypeString2(bytesVersion, directImports, isLocal, skipAlias))
+		container := "Vec"
+		if trw.wr.retainedVector() {
+			container = "crate::RetainedVec"
+		}
+		return fmt.Sprintf("%s<%s>", container, trw.element.t.TypeString2(bytesVersion, directImports, isLocal, skipAlias))
 	}
 	return fmt.Sprintf("[%s; %d]", trw.element.t.TypeString2(bytesVersion, directImports, isLocal, skipAlias), trw.size)
 }

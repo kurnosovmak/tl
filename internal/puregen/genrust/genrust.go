@@ -31,6 +31,9 @@ var jsonRuntime string
 //go:embed json_vector.rs
 var jsonVectorRuntime string
 
+//go:embed retained_vec.rs
+var retainedVecRuntime string
+
 type genRust struct {
 	kernel  *pure.Kernel
 	options *puregen.Options
@@ -157,6 +160,12 @@ mod json_vector;
 #[cfg(feature = "tl-json")]
 pub use json::JsonMode;
 `
+	if gen.options.Rust.RetainVectorBuffers {
+		code += "\nmod retained_vec;\npub use retained_vec::RetainedVec;\n"
+		if err := outdir.AddCodeFile("src/retained_vec.rs", retainedVecRuntime); err != nil {
+			return err
+		}
+	}
 	if rpc := gen.generateRPC(); rpc != "" {
 		code += "\npub mod rpc;\n"
 		if err := outdir.AddCodeFile("src/rpc.rs", gen.options.CopyrightText+"\n"+rpc); err != nil {

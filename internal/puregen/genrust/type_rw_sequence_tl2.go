@@ -102,9 +102,12 @@ func (wr *TypeRWWrapper) generateTL2Sequence(cc *codecreator.RustCodeCreator, el
 		} else {
 			needed := ifString(packed, "count.div_ceil(8)", "count")
 			cc.If(needed+" > data.len()", func() { cc.AddLinef("return Err(basictl::Error::InvalidLength);") })
-			cc.AddLinef("value.try_reserve_exact(count.saturating_sub(value.len())).map_err(|_| basictl::Error::InvalidLength)?;")
+			if !wr.retainedVector() {
+				cc.AddLinef("value.try_reserve_exact(count.saturating_sub(value.len())).map_err(|_| basictl::Error::InvalidLength)?;")
+			}
 			if !packed {
-				cc.AddLinef("basictl::read_vector_into(value, count, || %s, |slot| {", rustDefault(element))
+				reader := ifString(wr.retainedVector(), "value.read_into(", "basictl::read_vector_into(value, ")
+				cc.AddLinef("%scount, || %s, |slot| {", reader, rustDefault(element))
 				cc.FinishBlock(func() {
 					element.readTL2Into(cc, "&mut data", "slot")
 					cc.AddLinef("Ok(())")

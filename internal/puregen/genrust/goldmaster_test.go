@@ -26,6 +26,11 @@ import (
 )
 
 func TestGoldmasterInterop(t *testing.T) {
+	t.Run("default", func(t *testing.T) { testGoldmasterInterop(t, false) })
+	t.Run("retained", func(t *testing.T) { testGoldmasterInterop(t, true) })
+}
+
+func testGoldmasterInterop(t *testing.T, retain bool) {
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
 		t.Skip("cargo is required to test generated Rust")
@@ -33,7 +38,7 @@ func TestGoldmasterInterop(t *testing.T) {
 	options := puregen.Options{
 		Language:    "rust",
 		Outdir:      t.TempDir(),
-		Rust:        puregen.OptionsRust{CrateName: "gentl"},
+		Rust:        puregen.OptionsRust{CrateName: "gentl", RetainVectorBuffers: retain},
 		ErrorWriter: io.Discard,
 		Kernel:      pure.OptionsKernel{TypesWhiteList: "*", TL2WhiteList: "*"},
 	}

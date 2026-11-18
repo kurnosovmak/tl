@@ -80,6 +80,19 @@ These methods decode in a single pass into one reusable value. On error the
 input cursor stays at the start of the message, and the next read can reuse
 the same value.
 
+For streams whose vector lengths vary, generate with `--retain-vector-buffers`.
+Variable-length vectors of compound elements then use `gentl::RetainedVec<T>`.
+A shorter message exposes only its active elements but keeps the others and
+their nested buffers for subsequent binary reads. Indexing, iteration and
+serialization use the active slice. Convert an existing `Vec<T>` with
+`.into()`. Call `discard_spare()` on a vector to drop the inactive elements
+and its transactional storage after a large message.
+
+For records consisting of required retained vectors and scalar fields, the
+ordinary binary reader decodes into a second reusable bank and commits all
+fields together. Such a reader can keep two messages' worth of vector slots.
+The in-place reader uses a single bank when used on its own.
+
 The Rust backend is experimental. Run `make testrust` to compile the generated
 libraries and check binary and TL-JSON compatibility against the Go backend.
 
@@ -94,7 +107,9 @@ The runner alternates languages between rounds and saves per-round medians
 Use `--verify-only` for the compatibility checks, `--rounds N` to repeat, or
 `--baseline-generator /path/to/tl2gen` to include an earlier Rust backend.
 Add `--rotating` to cycle through batches of 3, 24 and 192 events using
-the same destination. Per-round read times are saved in `rotating.csv`.
+the same destination. Pass `--retain-vector-buffers` to benchmark retained
+vectors and `--rotating-rounds N` to repeat this workload independently of the
+fixed-size rounds. Per-round read times are saved in `rotating.csv`.
 
 ## Documentation
 

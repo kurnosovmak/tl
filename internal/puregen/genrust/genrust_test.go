@@ -162,13 +162,22 @@ func TestNativeTL2(t *testing.T) {
 }
 
 func TestReaderReuse(t *testing.T) {
+	for _, tt := range []struct {
+		file   string
+		retain bool
+	}{{"reader_reuse.rs", false}, {"retained_read.rs", true}} {
+		t.Run(tt.file, func(t *testing.T) { testReaderReuse(t, tt.file, tt.retain) })
+	}
+}
+
+func testReaderReuse(t *testing.T, file string, retain bool) {
 	cargo, err := exec.LookPath("cargo")
 	if err != nil {
 		t.Skip("cargo is required to test generated Rust")
 	}
 	options := puregen.Options{
 		Language: "rust", Outdir: t.TempDir(),
-		Rust: puregen.OptionsRust{CrateName: "gentl"}, ErrorWriter: io.Discard,
+		Rust: puregen.OptionsRust{CrateName: "gentl", RetainVectorBuffers: retain}, ErrorWriter: io.Discard,
 		Kernel: pure.OptionsKernel{TypesWhiteList: "*", TL2WhiteList: "*"},
 	}
 	require.NoError(t, options.Validate())
@@ -178,6 +187,6 @@ func TestReaderReuse(t *testing.T) {
 	require.NoError(t, Generate(kernel, &options))
 	tests := filepath.Join(options.Outdir, "tests")
 	require.NoError(t, os.Mkdir(tests, 0755))
-	copyRustTest(t, tests, "reader_reuse.rs")
+	copyRustTest(t, tests, file)
 	runCargoTests(t, cargo, options.Outdir)
 }

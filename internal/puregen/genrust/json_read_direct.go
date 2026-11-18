@@ -25,6 +25,9 @@ func (wr *TypeRWWrapper) jsonInput(item string) (string, string) {
 	case *TypeRWBrackets:
 		elem, convert := typ.element.t.jsonInput("x")
 		if convert == "x" {
+			if wr.retainedVector() {
+				return "Vec<" + elem + ">", item + ".into()"
+			}
 			return "Vec<" + elem + ">", item
 		}
 		return "Vec<" + elem + ">", item + ".into_iter().map(|x| " + convert + ").collect()"

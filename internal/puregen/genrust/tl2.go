@@ -134,7 +134,7 @@ func (wr *TypeRWWrapper) generateTL2Methods(cc *codecreator.RustCodeCreator) {
 		cc.AddLinef("pub fn read_tl2(&mut self, buf: &mut &[u8]) -> basictl::Result<()> {")
 		cc.FinishBlock(func() {
 			cc.AddLinef("let mut input = *buf;")
-			if !reuseVectorTL2(cc, wr) {
+			if !reuseVectorTL2(cc, wr) && !wr.stageRetainedRead(cc, "decode_tl2_into(&mut input, &mut pending)") {
 				if wr.preflightRoot() {
 					cc.AddLinef("let mut probe = input;")
 					cc.If("preflight_tl2(&mut probe, self).is_some()", func() {
