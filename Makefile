@@ -271,9 +271,9 @@ testrust: build
 		--schemaCommit=abcdefgh \
 		--schemaTimestamp=301822800 \
 		./$(TLS_PATH)/goldmaster.tl ./$(TLS_PATH)/goldmaster2.tl ./$(TLS_PATH)/goldmaster3.tl
-		# genold will not compile due to import statements with gennew
-		# @echo "Checking that generated code actually compiles..."
-		# time $(GO) build ./target/genold/...
+	@cargo check --manifest-path ./target/gentl/Cargo.toml
+	@cargo check --manifest-path ./target/gengoldmaster/Cargo.toml
+	@$(GO) test -count=1 ./internal/puregen/genrust
 
 # /home/user/go/src/gitlab.mvk.com/go/vkgo/pkg/vktl/combined.tl
 # ./cmd/tl2client/test.tl

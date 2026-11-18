@@ -9,10 +9,12 @@ package puregen
 import "flag"
 
 type OptionsRust struct {
-	CrateName string
+	CrateName           string
+	RetainVectorBuffers bool
 }
 
 func (opt *OptionsRust) Bind(f *flag.FlagSet) {
+	f.BoolVar(&opt.RetainVectorBuffers, "retain-vector-buffers", false, "Rust: retain initialized elements of compound vectors across binary reads")
 	f.StringVar(&opt.CrateName, "crate-name", "gentl",
 		"not validate, must be compatible with rust build system")
 }

@@ -77,7 +77,10 @@ func (trw *TypeRWStruct) markHasBytesVersion(visitedNodes map[*TypeRWWrapper]boo
 }
 
 func (trw *TypeRWStruct) markHasRepairMasks(visitedNodes map[*TypeRWWrapper]bool) bool {
-	result := len(trw.AllNewTL2Masks()) != 0 && !trw.wr.OriginTL2()
+	result := false
+	for _, field := range trw.Fields {
+		result = result || (field.MaskTL2Bit() != nil && !trw.wr.OriginTL2())
+	}
 	for _, f := range trw.Fields {
 		result = result || f.t.MarkHasRepairMasks(visitedNodes)
 	}
@@ -223,21 +226,16 @@ func (trw *TypeRWStruct) typeRepairMasksCode(bytesVersion bool, directImports *D
 	return fmt.Sprintf("%s.RepairMasks(%s)", val, strings.Join(natArgs, ","))
 }
 
-func (trw *TypeRWStruct) typeWritingCode(bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool, last bool, needError bool) string {
+func (trw *TypeRWStruct) typeWritingCode(val string, bare bool, natArgs []string, ref bool) string {
+	prefix := writeTag(bare, trw.wr.TLTag())
 	if trw.isUnwrapType() {
-		prefix := ""
-		if !bare {
-			prefix = fmt.Sprintf("w = basictl.NatWrite(w, 0x%08x)\n", trw.wr.TLTag())
-		}
-		return prefix + trw.Fields[0].t.TypeWritingCode(bytesVersion, directImports, val, trw.Fields[0].Bare(), trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref, last, needError)
+		return prefix + trw.Fields[0].t.TypeWritingCode(val, trw.Fields[0].Bare(), trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref)
 	}
-	return wrapLastW(last, fmt.Sprintf("%s.WriteTL1%s(w %s %s)", val, addBare(bare), joinWithCommas(natArgs), trw.wr.fetcherCall()), needError)
+	return prefix + fmt.Sprintf("crate::types::%s::write_tl1(%s, buf%s%s)?;", trw.wr.goGlobalName, addAmpersand(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
 }
 
 func (trw *TypeRWStruct) typeReadingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports, val string, bare bool, natArgs []string, ref bool) {
-	if !bare {
-		cc.AddLinef("buf.read_exact_tag(0x%08x)?;", trw.wr.TLTag())
-	}
+	readTag(cc, bare, trw.wr.TLTag())
 	if trw.isUnwrapType() {
 		trw.Fields[0].t.TypeReadingCode(cc, bytesVersion, directImports, val, trw.Fields[0].Bare(), trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref)
 		return
@@ -245,147 +243,129 @@ func (trw *TypeRWStruct) typeReadingCode(cc *codecreator.RustCodeCreator, bytesV
 	cc.AddLinef("crate::types::%s::read_tl1(%s, buf%s%s)?;", trw.wr.goGlobalName, addMutableRef(ref, val), joinWithCommas(natArgs), trw.wr.fetcherCall())
 }
 
-func (trw *TypeRWStruct) typeJSONEmptyCondition(bytesVersion bool, val string, ref bool) string {
-	if trw.isTypedef() {
-		return trw.Fields[0].t.TypeJSONEmptyCondition(bytesVersion, val, ref)
-	}
-	return ""
-}
-
-func (trw *TypeRWStruct) typeJSONWritingCode(bytesVersion bool, directImports *DirectImports, val string, natArgs []string, ref bool, needError bool) string {
-	if trw.isUnwrapType() {
-		return trw.Fields[0].t.TypeJSONWritingCode(bytesVersion, directImports, val, trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref, needError)
-	}
-	if needError {
-		return fmt.Sprintf("if w, err = %s.WriteJSONOpt(jctx, w %s); err != nil { return w, err }", val, joinWithCommas(natArgs))
-	} else {
-		return fmt.Sprintf("w = %s.WriteJSONOpt(jctx, w %s)", val, joinWithCommas(natArgs))
-	}
-}
-
-func (trw *TypeRWStruct) typeJSON2ReadingCode(bytesVersion bool, directImports *DirectImports, jvalue string, val string, natArgs []string, ref bool) string {
-	if trw.isUnwrapType() {
-		return trw.Fields[0].t.TypeJSON2ReadingCode(bytesVersion, directImports, jvalue, val, trw.pureTypeStruct.ReplaceUnwrapArgs(0, natArgs), ref)
-	}
-	return fmt.Sprintf("if err := %s.ReadJSONGeneral(jctx, %s %s); err != nil { return err }", val, jvalue, joinWithCommas(natArgs))
-}
-
-// TODO - move to separate file
 func (trw *TypeRWStruct) GenerateCode(bytesVersion bool, directImports *DirectImports) string {
 	cc := codecreator.NewRustCodeCreator()
-	printCommentsType(trw.pureTypeStruct)
-	cc.AddLinef("use basictl::TLRead as _;")
-	cc.AddEmptyLine()
-	cc.AddLinef("#[derive(Default, Debug)]")
-	if trw.isAlias() || trw.isTypedef() {
-		asterisk := ifString(trw.Fields[0].recursive, "*", "")
-		fieldTypeString := trw.Fields[0].t.TypeString2(bytesVersion, directImports, false, false)
-		printCommentsField(trw.Fields[0])
-		cc.AddLinef("pub struct %s (%s%s);", trw.wr.goGlobalName, asterisk, fieldTypeString)
+	addTL1Import(cc)
+	name := trw.wr.goGlobalName
+	tupleStruct := trw.isAlias() || trw.isTypedef()
+	fieldType := func(field Field) string {
+		typ := field.t.TypeString2(bytesVersion, directImports, false, false)
+		if field.recursive {
+			typ = "Box<" + typ + ">"
+		}
+		if field.hasPresence() {
+			typ = "Option<" + typ + ">"
+		}
+		if field.IsBit() {
+			return "bool"
+		}
+		return typ
+	}
+	cc.AddLinef("#[derive(Debug)]")
+	if tupleStruct {
+		cc.AddLinef("pub struct %s(pub %s);", name, fieldType(trw.Fields[0]))
 	} else {
-		cc.AddLinef("pub struct %s {", trw.wr.goGlobalName)
+		cc.AddLinef("pub struct %s {", name)
 		cc.FinishBlock(func() {
 			for _, field := range trw.Fields {
-				printCommentsField(field)
-				if field.IsTL2Omitted() {
-					continue
+				if !field.IsTL2Omitted() {
+					cc.AddLinef("pub %s: %s,", field.goName, fieldType(field))
 				}
-				asterisk := ifString(field.recursive, "*", "")
-				fieldTypeString := ""
-				fieldsMaskComment := ""
-				if field.FieldMask() != nil {
-					fieldsMaskComment = fmt.Sprintf(" // Conditional: %s.%d", trw.wr.formatNatArg(trw.Fields, *field.FieldMask()), field.BitNumber())
-				} else if field.MaskTL2Bit() != nil {
-					fieldsMaskComment = fmt.Sprintf(" // Optional, use Set%s", field.goName)
-				}
-				prefixComment := ""
-				if field.IsBit() {
-					prefixComment = "// "
-					fieldTypeString = ifString(field.t.OriginTL2(), "bit", "(TrueType)")
-				} else {
-					fieldTypeString = field.t.TypeString2(bytesVersion, directImports, false, false)
-				}
-				cc.AddLinef("%s%s: %s%s,%s", prefixComment, field.goName, asterisk, fieldTypeString, fieldsMaskComment)
-			}
-			if trw.wr.HasTL2() {
-				for _, tl2mask := range trw.AllNewTL2Masks() {
-					cc.AddLinef("%s: u8,", tl2mask)
-				}
-			}
-		}, "}")
-	}
-	if len(trw.wr.NatParams()) == 0 {
-		cc.AddEmptyLine()
-		cc.AddLinef("impl %s {", trw.wr.goGlobalName)
-		cc.FinishBlock(func() {
-			cc.AddLinef("pub fn read_tl1<B: bytes::Buf + Copy>(&mut self, buf: &mut B) -> basictl::Result<()> {")
-			cc.FinishBlock(func() {
-				cc.AddLinef("self::read_tl1(self, buf)")
-			}, "}")
-			if trw.wr.TLTag() != 0 || trw.wr.OriginTL2() {
-				cc.AddLinef("pub fn read_tl1_boxed<B: bytes::Buf + Copy>(&mut self, buf: &mut B) -> basictl::Result<()> {")
-				cc.FinishBlock(func() {
-					if trw.wr.OriginTL2() {
-						cc.AddLinef(`Err(basictl::Error::NoTL1("%s")`, trw.wr.pureType.CanonicalName())
-						return
-					}
-					cc.AddLinef("buf.read_exact_tag(0x%08x)?;", trw.wr.TLTag())
-					cc.AddLinef("self::read_tl1(self, buf)")
-				}, "}")
 			}
 		}, "}")
 	}
 	cc.AddEmptyLine()
-	cc.AddLinef("impl %s {", trw.wr.goGlobalName)
+	cc.AddLinef("impl Default for %s {", name)
 	cc.FinishBlock(func() {
-		cc.AddLinef("pub fn reset(&mut self) {")
+		cc.AddLinef("fn default() -> Self {")
 		cc.FinishBlock(func() {
-			for _, field := range trw.Fields {
-				if field.IsTL2Omitted() {
-					continue
+			if tupleStruct {
+				defaultValue := "None"
+				if !trw.Fields[0].hasPresence() {
+					defaultValue = rustDefault(trw.Fields[0].t)
 				}
-				if field.t.IsTrueType() || field.IsBit() {
-					continue
-				}
-				fieldAccess, fieldAsterisk := field.FieldAccess("self", bytesVersion, directImports)
-				field.t.TypeResettingCode(cc, bytesVersion, directImports, fieldAccess, fieldAsterisk)
+				cc.AddLinef("Self(%s)", defaultValue)
+				return
 			}
+			cc.AddLinef("Self {")
+			cc.FinishBlock(func() {
+				for _, field := range trw.Fields {
+					if field.IsTL2Omitted() {
+						continue
+					}
+					defaultValue := "None"
+					if field.IsBit() {
+						defaultValue = "false"
+					} else if !field.hasPresence() {
+						defaultValue = rustDefault(field.t)
+					}
+					cc.AddLinef("%s: %s,", field.goName, defaultValue)
+				}
+			}, "}")
 		}, "}")
 	}, "}")
-
-	natArgsDecl := trw.wr.formatNatArgsDecl()
 	cc.AddEmptyLine()
-	cc.AddLinef("pub(crate) fn read_tl1<B: bytes::Buf + Copy>(value: &mut %s, buf: &mut B%s) -> basictl::Result<()> {", trw.wr.goGlobalName, natArgsDecl)
+	cc.AddLinef("impl %s {", name)
 	cc.FinishBlock(func() {
-		if trw.wr.OriginTL2() {
-			cc.AddLinef(`Err(basictl::Error::NoTL1("%s")`, trw.wr.pureType.CanonicalName())
-			return
+		trw.wr.generateTL1Methods(cc, "", "", false)
+		if trw.wr.TLTag() != 0 || trw.wr.OriginTL2() {
+			trw.wr.generateTL1Methods(cc, "_boxed", "", true)
 		}
+		cc.AddLinef("pub fn reset(&mut self) { *self = Self::default(); }")
+	}, "}")
+	cc.AddEmptyLine()
+	trw.wr.generateTL1Functions(cc, "", name, func() {
 		for _, field := range trw.Fields {
-			if field.IsBit() {
-				if !field.Bare() { // special rare case for TL1, let optimizer combine 2 expressions
-					arg := trw.wr.formatNatArg(trw.Fields, *field.FieldMask())
-					cc.If(fmt.Sprintf("%s & (1 << %v) != 0", arg, field.BitNumber()), func() {
-						cc.AddLinef("buf.read_exact_tag(0x%08x)?;", field.t.TLTag())
-					})
-				}
-				continue
-			}
-			fieldAccess, fieldAsterisk := field.FieldAccess("value", bytesVersion, directImports)
-			bodyFunc := func() {
-				cc.AddLinef("%s", field.EnsureRecursive(bytesVersion, directImports))
-				field.t.TypeReadingCode(cc, bytesVersion, directImports, fieldAccess, field.Bare(), trw.wr.formatNatArgs(trw.Fields, field.NatArgs()), fieldAsterisk)
-			}
-			if field.FieldMask() != nil {
-				arg := trw.wr.formatNatArg(trw.Fields, *field.FieldMask())
-				cc.IfElse(fmt.Sprintf("%s & (1 << %v) != 0", arg, field.BitNumber()), bodyFunc, func() {
-					field.t.TypeResettingCode(cc, bytesVersion, directImports, fieldAccess, fieldAsterisk)
-				})
-			} else {
-				bodyFunc()
-			}
+			trw.generateTL1Field(cc, field, false, bytesVersion, directImports)
 		}
 		cc.AddLinef("Ok(())")
-	}, "}")
+	}, func() {
+		for _, field := range trw.Fields {
+			trw.generateTL1Field(cc, field, true, bytesVersion, directImports)
+		}
+		cc.AddLinef("Ok(())")
+	})
 	return cc.Text()
+}
+
+func (trw *TypeRWStruct) generateTL1Field(cc *codecreator.RustCodeCreator, field Field, write bool, bytesVersion bool, directImports *DirectImports) {
+	if field.IsBit() && field.Bare() && write {
+		return
+	}
+	body := func() {
+		if field.IsBit() {
+			if write {
+				cc.AddLinef("basictl::write_tag(buf, 0x%08x);", field.t.TLTag())
+			} else {
+				readTag(cc, field.Bare(), field.t.TLTag())
+				cc.AddLinef("value.%s = true;", field.goName)
+			}
+			return
+		}
+		fieldAccess := "value." + field.goName
+		natArgs := trw.wr.formatNatArgs(trw.Fields, field.NatArgs())
+		if write && field.hasPresence() {
+			access := ifString(field.recursive, "as_deref", "as_ref")
+			cc.AddLinef("let field = %s.%s().ok_or(basictl::Error::MissingField(%q))?;", fieldAccess, access, field.OriginalName())
+			cc.AddLines(strings.Split(field.t.TypeWritingCode("field", field.Bare(), natArgs, true), "\n")...)
+		} else if write {
+			cc.AddLines(strings.Split(field.t.TypeWritingCode(fieldAccess, field.Bare(), natArgs, false), "\n")...)
+		} else if field.hasPresence() {
+			cc.AddLinef("let field = %s;", field.readSlot(fieldAccess))
+			field.t.TypeReadingCode(cc, bytesVersion, directImports, "field", field.Bare(), natArgs, true)
+		} else {
+			field.t.TypeReadingCode(cc, bytesVersion, directImports, fieldAccess, field.Bare(), natArgs, false)
+		}
+	}
+	if field.FieldMask() == nil {
+		body()
+		return
+	}
+	mask := trw.wr.formatNatArg(trw.Fields, *field.FieldMask())
+	condition := fmt.Sprintf("%s & (1 << %d) != 0", mask, field.BitNumber())
+	if write {
+		cc.If(condition, body)
+	} else {
+		cc.IfElse(condition, body, func() { cc.AddLinef("%s", field.resetAfterRead("value."+field.goName)) })
+	}
 }

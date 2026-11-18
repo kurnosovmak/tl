@@ -15,7 +15,7 @@ import (
 	"github.com/VKCOM/tl/internal/utils"
 )
 
-// create parallel hierarchy of wrappers, suitable for go generator
+// create parallel hierarchy of wrappers, suitable for Rust generation
 func (gen *genRust) compile() error {
 	if err := gen.addTypeWrappers(); err != nil {
 		return err
@@ -51,7 +51,7 @@ func (gen *genRust) compile() error {
 				return err
 			}
 		default:
-			return fmt.Errorf("kernel type for %s not implemented in go generator", pureType.CanonicalName())
+			return fmt.Errorf("kernel type for %s not implemented in Rust generator", pureType.CanonicalName())
 		}
 	}
 	for _, myWrapper := range gen.generatedTypesList {

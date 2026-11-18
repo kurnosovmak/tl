@@ -7,7 +7,6 @@
 package genrust
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/VKCOM/tl/internal/pure"
@@ -76,30 +75,45 @@ func (f *Field) IsBit() bool {
 	return f.pureField.IsBit()
 }
 
-func (f *Field) TL2MaskForOP(op string) string {
-	return fmt.Sprintf("tl2mask%d %s %d", *f.MaskTL2Bit()/8, op, 1<<(*f.MaskTL2Bit()%8))
+// The TL2 presence flag is independent of the legacy TL1 bitmask.
+func (f Field) hasPresence() bool {
+	return !f.IsBit() && (f.recursive || f.MaskTL2Bit() != nil)
 }
 
-func (f *Field) EnsureRecursive(bytesVersion bool, directImports *DirectImports) string {
-	if !f.recursive {
-		return ""
+func (field Field) wrapDecoded(expr string) string {
+	if field.recursive {
+		expr = "Box::new(" + expr + ")"
 	}
-	fieldAccess, _ := f.FieldAccess("self", bytesVersion, directImports)
-	myType := f.t.TypeString2(bytesVersion, directImports, false, false)
-	return fmt.Sprintf(`	if %s == nil { %s = new(%s) }
-`, fieldAccess, fieldAccess, myType)
+	if field.hasPresence() {
+		expr = "Some(" + expr + ")"
+	}
+	return expr
 }
 
-//func (f *Field) TypeResettingCode(cc *codecreator.RustCodeCreator, bytesVersion bool, directImports *DirectImports) {
-//	fieldAccess, fieldAsterisk := f.FieldAccess(bytesVersion, directImports)
-//	f.t.TypeResettingCode(cc, bytesVersion, directImports, fieldAccess, fieldAsterisk)
-//if f.recursive {
-//	return fmt.Sprintf(`	if %s != nil {
-//	%s
-//}`, fieldAccess, resetCode)
-//}
-//}
+func (field Field) resetAfterRead(access string) string {
+	if !field.hasPresence() && field.t.retainedVector() {
+		return access + ".clear();"
+	}
+	return access + " = " + field.readDefault() + ";"
+}
 
-func (f *Field) FieldAccess(val string, bytesVersion bool, directImports *DirectImports) (string, bool) {
-	return fmt.Sprintf("%s.%s", val, f.goName), f.recursive
+func (field Field) readDefault() string {
+	if field.hasPresence() {
+		return "None"
+	}
+	if field.IsBit() {
+		return "false"
+	}
+	return rustDefault(field.t)
+}
+
+func (field Field) readSlot(access string) string {
+	if !field.hasPresence() {
+		return "&mut " + access
+	}
+	initial := rustDefault(field.t)
+	if field.recursive {
+		return access + ".get_or_insert_with(|| Box::new(" + initial + ")).as_mut()"
+	}
+	return access + ".get_or_insert_with(|| " + initial + ")"
 }

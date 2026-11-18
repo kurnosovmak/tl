@@ -1,0 +1,5 @@
+sample.record =
+    f0?:int32 flag:bit _old:string f3:uint64 f4:int64 f5:bool f6:int32
+    f7:int32 f8:string flags:[]bit;
+sample.Blob <=> string;
+sample.State = | idle | running count:int32;
